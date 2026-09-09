@@ -1,0 +1,6 @@
+{
+  "name": "SISPAT Public - Controle Patrimonial e Auditoria",
+  "description": "Sistema de leitura, organização e rastreabilidade de patrimônios públicos com QR Code, relatórios em tempo real e auditoria.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,30 @@
+SISPAT PUBLIC 3.1.0 - VALIDAÇÃO DA ENTREGA
+Data da entrega: 04/09/2026
+
+VALIDAÇÕES REALIZADAS
+[OK] TypeScript: tsc --noEmit
+[OK] Base patrimonial inicial vazia: 0 registros demonstrativos
+[OK] Login administrativo inicial: admin
+[OK] Usuários de demonstração anteriores removidos do código de aplicação/documentação
+[OK] Cadastro individual abre sem valor, fornecedor, nota fiscal, data, local ou responsável predefinidos
+[OK] Tombo, código de barras e QR Code podem ser informados manualmente e possuem checagem de duplicidade quando preenchidos
+[OK] Cadastro em lote não atribui categoria/estado/situação fictícios: esses campos devem ser fornecidos pelo usuário
+[OK] Patrimônios: cadastrar, editar e excluir definitivamente
+[OK] Manutenções: cadastrar, editar e excluir
+[OK] Empréstimos: cadastrar, editar e excluir
+[OK] Inventários: criar, atualizar/concluir e excluir sessões
+[OK] Usuários e setores: administração pelo perfil ADMIN
+[OK] Botão ZERAR com confirmação dupla e preservação apenas do acesso admin
+[OK] Novas chaves localStorage v31 evitam reaproveitar automaticamente a base demonstrativa anterior
+[OK] Pacote de distribuição preparado sem node_modules e sem arquivo .env
+
+PRIMEIRO ACESSO
+Login: admin
+Senha temporária: Admin#2026!SisPat
+Troca de senha obrigatória no primeiro acesso.
+
+OBSERVAÇÃO DE BUILD
+A checagem TypeScript foi executada com sucesso. O build nativo completo não foi executado neste ambiente porque as dependências disponíveis para validação vieram originalmente com binários de outra plataforma. O ZIP final não inclui node_modules; no Windows, execute `npm ci` e depois `npm run dev` ou `npm run build`.
+
+LIMITAÇÃO ARQUITETURAL CONHECIDA
+A versão 3.1 permanece compatível com persistência local (localStorage). Para vários computadores compartilharem a mesma base em tempo real, ainda é necessária a migração integral das operações para persistência central no servidor/PostgreSQL.
