@@ -1,5 +1,5 @@
-import { checkApiKey } from './apiKey';
-import { verifyToken } from './jwt';
+import { checkApiKey } from './apiKey.js';
+import { verifyToken } from './jwt.js';
 
 export type AuthUser = {
   id: string;

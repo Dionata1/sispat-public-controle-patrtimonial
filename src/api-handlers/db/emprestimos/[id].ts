@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
+import { authorize } from '../../../db/authorize.js';
 
 // /api/db/emprestimos/[id]
 // DELETE -> exclui um empréstimo pelo id (somente ADMIN)
@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { isDbAvailable, deleteEmprestimoDb } = await import('../../../db/dbService');
+    const { isDbAvailable, deleteEmprestimoDb } = await import('../../../db/dbService.js');
     if (!(await isDbAvailable())) {
       return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
     }

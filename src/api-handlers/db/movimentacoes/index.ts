@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
-import { validateMovimentacaoPayload } from '../../../db/validation';
+import { authorize } from '../../../db/authorize.js';
+import { validateMovimentacaoPayload } from '../../../db/validation.js';
 import type { Movimentacao } from '../../../types';
 
 // /api/db/movimentacoes
@@ -24,7 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllMovimentacoesDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllMovimentacoesDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       const items = await getAllMovimentacoesDb();
       return res.json({ movimentacoes: items });
@@ -39,7 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'O parâmetro patrimonioId é obrigatório para exclusão em lote.' });
     }
     try {
-      const { isDbAvailable, deleteMovimentacoesByPatrimonioDb } = await import('../../../db/dbService');
+      const { isDbAvailable, deleteMovimentacoesByPatrimonioDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       await deleteMovimentacoesByPatrimonioDb(patrimonioId);
       return res.json({ status: 'success' });
@@ -54,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Dados inválidos.', details: validated.errors ?? [] });
     }
     try {
-      const { isDbAvailable, upsertMovimentacaoDb } = await import('../../../db/dbService');
+      const { isDbAvailable, upsertMovimentacaoDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       await upsertMovimentacaoDb(validated.data as Movimentacao);
       return res.json({ status: 'success' });

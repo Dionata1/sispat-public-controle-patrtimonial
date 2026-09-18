@@ -1,5 +1,5 @@
-import { db } from './index';
-import { patrimonios, emprestimos, manutencoes, inventarios, auditLogs, users, sectors, movimentacoes } from './schema';
+import { db } from './index.js';
+import { patrimonios, emprestimos, manutencoes, inventarios, auditLogs, users, sectors, movimentacoes } from './schema.js';
 import { eq } from 'drizzle-orm';
 import { Patrimonio, Emprestimo, Manutencao, InventarioSessao, AuditLog, UserAccount, UserRole, SectorItem, Movimentacao } from '../types';
 

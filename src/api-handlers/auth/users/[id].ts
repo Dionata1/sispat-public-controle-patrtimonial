@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from '../../../db/requireAuth';
+import { requireAuth } from '../../../db/requireAuth.js';
 import type { UserAccount, UserRole } from '../../../types';
-import { publicUserOf } from './index';
+import { publicUserOf } from './index.js';
 
 const ALLOWED_ROLES: UserRole[] = ['ADMIN', 'GESTOR', 'AUDITOR', 'OPERADOR', 'CONSULTOR', 'SERVIDOR', 'PROFESSOR', 'TECNICO'];
 
@@ -17,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'DELETE') {
     try {
-      const { isDbAvailable, listUsersDb, deleteUserDb } = await import('../../../db/dbService');
+      const { isDbAvailable, listUsersDb, deleteUserDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }
@@ -39,7 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'PUT') {
     try {
-      const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../../db/dbService');
+      const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }

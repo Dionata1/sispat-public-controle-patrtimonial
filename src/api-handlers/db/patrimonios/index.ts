@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
-import { validatePatrimonioPayload } from '../../../db/validation';
+import { authorize } from '../../../db/authorize.js';
+import { validatePatrimonioPayload } from '../../../db/validation.js';
 import type { Patrimonio } from '../../../types';
 
 // Detecta violação de unicidade do PostgreSQL (código 23505) e converte em 409
@@ -57,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllPatrimoniosDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllPatrimoniosDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }
@@ -74,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Dados inválidos.', details: validated.errors ?? [] });
     }
     try {
-      const { isDbAvailable, upsertPatrimonioDb } = await import('../../../db/dbService');
+      const { isDbAvailable, upsertPatrimonioDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }

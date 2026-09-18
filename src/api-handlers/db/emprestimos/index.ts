@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
-import { validateEmprestimoPayload } from '../../../db/validation';
+import { authorize } from '../../../db/authorize.js';
+import { validateEmprestimoPayload } from '../../../db/validation.js';
 import type { Emprestimo } from '../../../types';
 
 // /api/db/emprestimos
@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllEmprestimosDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllEmprestimosDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }
@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Dados inválidos.', details: validated.errors ?? [] });
     }
     try {
-      const { isDbAvailable, upsertEmprestimoDb } = await import('../../../db/dbService');
+      const { isDbAvailable, upsertEmprestimoDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }

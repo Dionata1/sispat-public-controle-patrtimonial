@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
+import { authorize } from '../../../db/authorize.js';
 import type { SectorItem } from '../../../types';
 
 // /api/db/sectors
@@ -20,7 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllSectorsDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllSectorsDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       const items = await getAllSectorsDb();
       return res.json({ sectors: items });
@@ -42,7 +42,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!responsavel) return res.status(400).json({ error: 'O campo responsavel é obrigatório.' });
 
     try {
-      const { isDbAvailable, upsertSectorDb } = await import('../../../db/dbService');
+      const { isDbAvailable, upsertSectorDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       const item: SectorItem = {
         id,

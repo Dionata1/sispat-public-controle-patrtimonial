@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
+import { authorize } from '../../../db/authorize.js';
 
 // /api/db/patrimonios/[id]
 // DELETE -> exclui um patrimônio pelo id (somente perfis com canDeleteAsset)
@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { isDbAvailable, deletePatrimonioDb } = await import('../../../db/dbService');
+    const { isDbAvailable, deletePatrimonioDb } = await import('../../../db/dbService.js');
     if (!(await isDbAvailable())) {
       return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
     }

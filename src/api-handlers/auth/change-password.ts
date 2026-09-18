@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from '../../db/requireAuth';
-import { validatePasswordStrengthNode, verifyPasswordNode, hashPasswordNode } from '../../db/password';
+import { requireAuth } from '../../db/requireAuth.js';
+import { validatePasswordStrengthNode, verifyPasswordNode, hashPasswordNode } from '../../db/password.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -21,7 +21,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (strengthError) return res.status(400).json({ error: strengthError });
 
   try {
-    const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../db/dbService');
+    const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../db/dbService.js');
     if (!(await isDbAvailable())) {
       return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
     }

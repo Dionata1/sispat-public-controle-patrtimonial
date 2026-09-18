@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
-import { validateInventarioPayload } from '../../../db/validation';
+import { authorize } from '../../../db/authorize.js';
+import { validateInventarioPayload } from '../../../db/validation.js';
 import type { InventarioSessao } from '../../../types';
 
 // /api/db/inventarios
@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllInventariosDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllInventariosDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       const items = await getAllInventariosDb();
       return res.json({ inventarios: items });
@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Dados inválidos.', details: validated.errors ?? [] });
     }
     try {
-      const { isDbAvailable, upsertInventarioDb } = await import('../../../db/dbService');
+      const { isDbAvailable, upsertInventarioDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       await upsertInventarioDb(validated.data as InventarioSessao);
       return res.json({ status: 'success' });

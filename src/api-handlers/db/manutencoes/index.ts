@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
-import { validateManutencaoPayload } from '../../../db/validation';
+import { authorize } from '../../../db/authorize.js';
+import { validateManutencaoPayload } from '../../../db/validation.js';
 import type { Manutencao } from '../../../types';
 
 // /api/db/manutencoes
@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllManutencoesDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllManutencoesDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }
@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Dados inválidos.', details: validated.errors ?? [] });
     }
     try {
-      const { isDbAvailable, upsertManutencaoDb } = await import('../../../db/dbService');
+      const { isDbAvailable, upsertManutencaoDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }

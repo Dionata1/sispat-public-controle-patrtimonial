@@ -4,7 +4,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 // (mantido sem proteção por API key, igual ao server.ts).
 export default async function handler(_req: VercelRequest, res: VercelResponse) {
   try {
-    const { isDbAvailable } = await import('../../db/dbService');
+    const { isDbAvailable } = await import('../../db/dbService.js');
     const active = await isDbAvailable();
     return res.json({
       status: 'ok',

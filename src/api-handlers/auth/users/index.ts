@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from '../../../db/requireAuth';
-import { generateTemporaryPasswordNode, hashPasswordNode } from '../../../db/password';
+import { requireAuth } from '../../../db/requireAuth.js';
+import { generateTemporaryPasswordNode, hashPasswordNode } from '../../../db/password.js';
 import type { UserAccount, UserRole } from '../../../types';
 
 const ALLOWED_ROLES: UserRole[] = ['ADMIN', 'GESTOR', 'AUDITOR', 'OPERADOR', 'CONSULTOR', 'SERVIDOR', 'PROFESSOR', 'TECNICO'];
@@ -20,7 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, listUsersDb } = await import('../../../db/dbService');
+      const { isDbAvailable, listUsersDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }
@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'POST') {
     try {
-      const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../../db/dbService');
+      const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) {
         return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       }

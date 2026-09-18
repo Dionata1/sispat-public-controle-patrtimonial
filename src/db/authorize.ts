@@ -1,5 +1,5 @@
-import { verifyToken } from './jwt';
-import { can } from './permissions';
+import { verifyToken } from './jwt.js';
+import { can } from './permissions.js';
 import type { UserRole } from '../types';
 
 export type AuthorizedUser = {
@@ -54,7 +54,7 @@ export async function authorize(req: RequestLike, options?: AuthorizeOptions): P
   }
 
   try {
-    const { isDbAvailable, listUsersDb } = await import('./dbService');
+    const { isDbAvailable, listUsersDb } = await import('./dbService.js');
     if (!(await isDbAvailable())) {
       return { ok: false, status: 503, error: 'PostgreSQL indisponível no momento.' };
     }

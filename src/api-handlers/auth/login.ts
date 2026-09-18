@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyPasswordNode, hashPasswordNode } from '../../db/password';
-import { createToken } from '../../db/jwt';
+import { verifyPasswordNode, hashPasswordNode } from '../../db/password.js';
+import { createToken } from '../../db/jwt.js';
 import type { UserAccount, UserProfile } from '../../types';
 
 function toUserProfile(account: UserAccount): UserProfile {
@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../db/dbService');
+    const { isDbAvailable, listUsersDb, upsertUserDb } = await import('../../db/dbService.js');
     if (!(await isDbAvailable())) {
       return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
     }

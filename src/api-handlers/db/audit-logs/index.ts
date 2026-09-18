@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { authorize } from '../../../db/authorize';
-import { validateAuditLogPayload } from '../../../db/validation';
+import { authorize } from '../../../db/authorize.js';
+import { validateAuditLogPayload } from '../../../db/validation.js';
 import type { AuditLog } from '../../../types';
 
 // /api/db/audit-logs
@@ -20,7 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'GET') {
     try {
-      const { isDbAvailable, getAllAuditLogsDb } = await import('../../../db/dbService');
+      const { isDbAvailable, getAllAuditLogsDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       const items = await getAllAuditLogsDb();
       return res.json({ auditLogs: items });
@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Dados inválidos.', details: validated.errors ?? [] });
     }
     try {
-      const { isDbAvailable, insertAuditLogDb } = await import('../../../db/dbService');
+      const { isDbAvailable, insertAuditLogDb } = await import('../../../db/dbService.js');
       if (!(await isDbAvailable())) return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
       await insertAuditLogDb(validated.data as AuditLog);
       return res.json({ status: 'success' });

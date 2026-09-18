@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from '../../db/requireAuth';
+import { requireAuth } from '../../db/requireAuth.js';
 import type { UserAccount, UserProfile } from '../../types';
 
 function toUserProfile(account: UserAccount): UserProfile {
@@ -30,7 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!auth.user?.id) return res.status(401).json({ error: 'Token inválido.' });
 
   try {
-    const { isDbAvailable, listUsersDb } = await import('../../db/dbService');
+    const { isDbAvailable, listUsersDb } = await import('../../db/dbService.js');
     if (!(await isDbAvailable())) {
       return res.status(503).json({ error: 'PostgreSQL indisponível no momento.' });
     }
