@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
-import { Users, Shield, UserCheck, Lock, CheckCircle2, KeyRound, Plus, X, Laptop, Eye } from 'lucide-react';
+import { Users, Shield, UserCheck, X } from 'lucide-react';
 import { UserProfile, UserRole, PermissionConfig } from '../types';
 
 interface UserManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserProfile;
-  onSwitchUserRole: (profile: UserProfile) => void;
 }
 
 export const ROLE_PERMISSIONS_MAP: Record<UserRole, PermissionConfig> = {
@@ -120,25 +119,9 @@ export const ROLE_PERMISSIONS_MAP: Record<UserRole, PermissionConfig> = {
   },
 };
 
-export const DEFAULT_USERS_LIST: UserProfile[] = [
-  {
-    role: 'ADMIN',
-    name: 'Administrador',
-    email: 'admin@sispat.local',
-    cpf: '',
-    matricula: 'ADMIN',
-    setor: 'Administração',
-    cargo: 'Administrador Geral do Sistema',
-    ativo: true,
-    twoFactorEnabled: false,
-  },
-];
-
 export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   isOpen,
   onClose,
-  currentUser,
-  onSwitchUserRole,
 }) => {
   const [activeUserTab, setActiveUserTab] = useState<'profiles' | 'rbac'>('profiles');
 
@@ -194,63 +177,13 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         {/* Profiles Tab */}
         {activeUserTab === 'profiles' && (
           <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
-              {DEFAULT_USERS_LIST.map(user => {
-                const isCurrent = currentUser.role === user.role && currentUser.email === user.email;
-
-                return (
-                  <div
-                    key={user.email}
-                    className={`p-4 rounded-2xl border transition flex flex-col justify-between space-y-3 ${
-                      isCurrent
-                        ? 'bg-indigo-950/60 border-indigo-500 shadow-lg shadow-indigo-950/40'
-                        : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
-                          user.role === 'ADMIN' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-                          user.role === 'GESTOR' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' :
-                          user.role === 'AUDITOR' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
-                          user.role === 'TECNICO' ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30' :
-                          user.role === 'PROFESSOR' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-                          user.role === 'SERVIDOR' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
-                          'bg-slate-500/20 text-slate-400 border border-slate-500/30'
-                        }`}>
-                          {user.role}
-                        </span>
-
-                        {isCurrent && (
-                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Sessão Ativa
-                          </span>
-                        )}
-                      </div>
-
-                      <h4 className="font-bold text-white text-sm mt-2">{user.name}</h4>
-                      <p className="text-xs text-slate-400">{user.email}</p>
-
-                      <div className="mt-2 text-[11px] text-slate-400 space-y-0.5 border-t border-slate-900 pt-2">
-                        <p><strong className="text-slate-300">Setor:</strong> {user.setor}</p>
-                        <p><strong className="text-slate-300">Matrícula:</strong> {user.matricula}</p>
-                      </div>
-                    </div>
-
-                    {!isCurrent && (
-                      <button
-                        onClick={() => {
-                          onSwitchUserRole(user);
-                          onClose();
-                        }}
-                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 rounded-xl transition flex items-center justify-center gap-1.5"
-                      >
-                        <UserCheck className="w-3.5 h-3.5" /> Alternar para este Perfil
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+            <div className="p-4 rounded-2xl border border-slate-800 bg-slate-950 text-xs text-slate-400 flex items-start gap-2">
+              <UserCheck className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+              <span>
+                A alternância de perfis locais foi desativada. O acesso é autenticado
+                centralmente (Neon) e as contas/permisões são gerenciadas pelo
+                Administrador Geral na tela <strong>Usuários</strong>.
+              </span>
             </div>
           </div>
         )}

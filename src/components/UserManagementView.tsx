@@ -5,7 +5,6 @@ import {
   ShieldCheck, 
   Search, 
   Filter, 
-  Lock, 
   KeyRound, 
   Trash2, 
   Edit3, 
@@ -14,18 +13,13 @@ import {
   AlertTriangle, 
   Copy, 
   Check, 
-  RefreshCw, 
   ShieldAlert, 
-  Building2, 
-  Mail, 
-  Phone, 
-  BadgeCheck, 
   UserCheck, 
   UserX,
-  Sparkles,
   Info
 } from 'lucide-react';
 import { storageService } from '../services/storageService';
+import { userFacingApiError } from '../services/apiClient';
 import { UserAccount, UserRole, UserProfile, SectorItem } from '../types';
 import { ROLE_PERMISSIONS_MAP } from './UserManagementModal';
 
@@ -64,16 +58,43 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   });
 
   // Load data
-  const loadData = () => {
-    const loadedUsers = storageService.getUsers();
+  const loadData = async () => {
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    // Setores: exibe o cache em memória da sessão (datalist) e depois busca a
+    // fonte única no Neon (apiGetSectors). Nenhum espelho/fallback local é usado.
     const loadedSectors = storageService.getSectors();
-    setUsers(loadedUsers);
     setSectors(loadedSectors);
 
+    if (!storageService.isLoggedIn()) {
+      setUsers([]);
+      return;
+    }
+
+    // Usuários: carga exclusivamente do banco central (Neon) via
+    // GET /api/auth/users (apiListUsers). A lista local/IndexedDB não é usada.
+    try {
+      const centralUsers = await storageService.refreshUsersFromApi();
+      setUsers(centralUsers);
+    } catch (err) {
+      // Em falha central, exibe o erro ao usuário e mantém a última lista em
+      // memória somente leitura (nunca um espelho local).
+      setErrorMessage(userFacingApiError(err));
+      setUsers(storageService.getUsers());
+    }
+
+    try {
+      const centralSectors = await storageService.refreshSectorsFromApi();
+      setSectors(centralSectors);
+    } catch {
+      // Em falha central, mantém o cache da memória de sessão (somente leitura);
+      // nenhum dado de setor é gravado/montado localmente.
+    }
   };
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
 
   // Filtered Users list
@@ -139,38 +160,38 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
 
     try {
       if (editingUser) {
-        // Update user
-        const updated = storageService.updateUser({
+        // Update user (persistido no Neon)
+        const updated = await storageService.updateUser({
           ...editingUser,
           ...formData,
         }, currentUser);
 
-        setSuccessMessage(`Cadastro do usuário "${updated.nomeCompleto}" atualizado com sucesso!`);
+        setSuccessMessage(`Cadastro do usuário "${updated.nomeCompleto}" atualizado com sucesso no banco central!`);
         setIsCreateModalOpen(false);
-        loadData();
+        await loadData();
       } else {
-        // Create user
+        // Create user (persistido no Neon)
         const result = await storageService.createUser(formData, currentUser);
         setTempPasswordResult({
           user: result.user,
           tempPass: result.tempPassword
         });
         setIsCreateModalOpen(false);
-        loadData();
+        await loadData();
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Ocorreu um erro ao salvar o usuário.');
+      setErrorMessage(userFacingApiError(err));
     }
   };
 
-  const handleToggleStatus = (userId: string, currentStatus: string) => {
+  const handleToggleStatus = async (userId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'Ativo' ? 'Inativo' : 'Ativo';
     try {
-      storageService.toggleUserStatus(userId, nextStatus as any, currentUser);
-      setSuccessMessage(`Status alterado para "${nextStatus}" com sucesso.`);
-      loadData();
+      await storageService.toggleUserStatus(userId, nextStatus as any, currentUser);
+      setSuccessMessage(`Status alterado para "${nextStatus}" no banco central.`);
+      await loadData();
     } catch (err: any) {
-      alert(err.message);
+      alert(userFacingApiError(err));
     }
   };
 
@@ -185,23 +206,23 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
         user: user,
         tempPass: res.tempPassword
       });
-      loadData();
+      await loadData();
     } catch (err: any) {
-      alert(err.message);
+      alert(userFacingApiError(err));
     }
   };
 
-  const handleDeleteUser = (user: UserAccount) => {
+  const handleDeleteUser = async (user: UserAccount) => {
     if (!confirm(`ATENÇÃO: Deseja realmente EXCLUIR permanentemente o usuário "${user.nomeCompleto}" (${user.login})? Esta ação não pode ser desfeita.`)) {
       return;
     }
 
     try {
-      storageService.deleteUser(user.id, currentUser);
-      setSuccessMessage(`Usuário "${user.nomeCompleto}" excluído do sistema.`);
-      loadData();
+      await storageService.deleteUser(user.id, currentUser);
+      setSuccessMessage(`Usuário "${user.nomeCompleto}" excluído do banco central.`);
+      await loadData();
     } catch (err: any) {
-      alert(err.message);
+      alert(userFacingApiError(err));
     }
   };
 

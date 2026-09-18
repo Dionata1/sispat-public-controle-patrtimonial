@@ -13,7 +13,9 @@ import {
   LogOut,
   KeyRound,
   User,
-  Database
+  Database,
+  RefreshCw,
+  Cloud
 } from 'lucide-react';
 import { UserProfile, UserRole } from '../types';
 
@@ -29,6 +31,8 @@ interface HeaderProps {
   onLogout: () => void;
   onOpenLogin: () => void;
   onOpenDatabaseAdmin?: () => void;
+  centralOnline?: boolean | null;
+  onRefreshPatrimonios?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -43,6 +47,8 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onOpenLogin,
   onOpenDatabaseAdmin,
+  centralOnline = null,
+  onRefreshPatrimonios,
 }) => {
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-40 shadow-md">
@@ -82,6 +88,34 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Action Buttons & User Switcher */}
           <div className="flex items-center gap-2 sm:gap-3">
             
+            {/* Banco Central (Neon) Status & Refresh */}
+            {centralOnline === true && (
+              <div
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-bold"
+                title="Banco central (PostgreSQL/Neon) conectado — dados sincronizados"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                <span>Online — Neon</span>
+              </div>
+            )}
+            {centralOnline === false && (
+              <div
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-[10px] font-bold"
+                title="Banco central (PostgreSQL/Neon) indisponível — patrimônios bloqueados"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                <span>Banco central indisponível</span>
+              </div>
+            )}
+            <button
+              onClick={() => onRefreshPatrimonios && onRefreshPatrimonios()}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-slate-300 hover:text-emerald-300 hover:bg-slate-800 rounded-lg transition border border-slate-700"
+              title="Atualizar patrimônios do banco central (Neon)"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span className="hidden xl:inline text-[10px] font-bold">Atualizar</span>
+            </button>
+
             {/* Quick QR Scanner Button */}
             <button
               onClick={onOpenScanner}
@@ -159,12 +193,12 @@ export const Header: React.FC<HeaderProps> = ({
                 <LogOut className="w-4 h-4" />
               </button>
 
-              {/* Banco local - somente Admin */}
+              {/* Banco de dados centralizado (Neon) - somente Admin */}
               {currentUser.role === 'ADMIN' && onOpenDatabaseAdmin && (
                 <button
                   onClick={onOpenDatabaseAdmin}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 text-emerald-300 hover:text-white hover:bg-emerald-600 rounded-lg transition border border-emerald-500/30"
-                  title="Banco local, backup e restauração"
+                  title="Status do banco centralizado (Neon)"
                 >
                   <Database className="w-3.5 h-3.5" />
                   <span className="hidden 2xl:inline text-[10px] font-bold">Banco</span>

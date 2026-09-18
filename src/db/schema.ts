@@ -3,7 +3,7 @@ import { pgTable, text, timestamp, integer, doublePrecision, jsonb, boolean } fr
 export const patrimonios = pgTable('patrimonios', {
   id: text('id').primaryKey(),
   codigoPatrimonial: text('codigo_patrimonial').notNull().unique(),
-  codigoBarras: text('codigo_barras').notNull().unique(),
+  codigoBarras: text('codigo_barras').unique(),
   qrCode: text('qr_code').notNull(),
   nome: text('nome').notNull(),
   categoria: text('categoria').notNull(),
@@ -88,6 +88,51 @@ export const inventarios = pgTable('inventarios', {
   divergencias: jsonb('divergencias'),
   status: text('status').notNull(),
   coordenadasGps: jsonb('coordenadas_gps'),
+});
+
+export const users = pgTable('users', {
+  id: text('id').primaryKey(),
+  login: text('login').notNull().unique(),
+  nomeCompleto: text('nome_completo').notNull(),
+  cpf: text('cpf').notNull(),
+  matricula: text('matricula').notNull(),
+  email: text('email').notNull().unique(),
+  telefone: text('telefone'),
+  cargo: text('cargo').notNull(),
+  setor: text('setor').notNull(),
+  role: text('role').notNull(),
+  situacao: text('situacao').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  forcePasswordChange: boolean('force_password_change').notNull(),
+  tentativasInvalidas: integer('tentativas_invalidas').notNull().default(0),
+  dataCriacao: text('data_criacao').notNull(),
+  ultimoAcesso: text('ultimo_acesso'),
+});
+
+export const sectors = pgTable('sectors', {
+  id: text('id').primaryKey(),
+  nome: text('nome').notNull(),
+  sigla: text('sigla').notNull(),
+  responsavel: text('responsavel').notNull(),
+  emailContact: text('email_contact'),
+  totalPatrimonios: integer('total_patrimonios'),
+});
+
+export const movimentacoes = pgTable('movimentacoes', {
+  id: text('id').primaryKey(),
+  patrimonioId: text('patrimonio_id').notNull(),
+  codigoPatrimonial: text('codigo_patrimonial').notNull(),
+  patrimonioNome: text('patrimonio_nome').notNull(),
+  dataHora: text('data_hora').notNull(),
+  usuarioNome: text('usuario_nome').notNull(),
+  usuarioPerfil: text('usuario_perfil').notNull(),
+  localAnterior: text('local_anterior').notNull(),
+  localNovo: text('local_novo').notNull(),
+  responsavelAnterior: text('responsavel_anterior').notNull(),
+  responsavelNovo: text('responsavel_novo').notNull(),
+  motivo: text('motivo').notNull(),
+  tipoOperacao: text('tipo_operacao').notNull(),
+  dataRegistro: text('data_registro'),
 });
 
 export const auditLogs = pgTable('audit_logs', {

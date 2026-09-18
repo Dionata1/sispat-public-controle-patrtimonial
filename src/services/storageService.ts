@@ -8,33 +8,69 @@ import {
   UserProfile,
   UserRole,
   UserAccount,
-  SectorItem
+  SectorItem,
+  SituacaoPatrimonio
 } from '../types';
-import { 
-  INITIAL_PATRIMONIOS, 
-  INITIAL_MOVIMENTACOES, 
-  INITIAL_MANUTENCOES, 
-  INITIAL_EMPRESTIMOS, 
-  INITIAL_AUDIT_LOGS,
-  INITIAL_INVENTARIO_SESSAO 
+import {
+  INITIAL_INVENTARIO_SESSAO
 } from '../data/initialData';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import QRCode from 'qrcode';
-import { hashPassword, verifyPassword, validatePasswordStrength, generateTemporaryPassword } from '../utils/passwordSecurity';
+import { validatePasswordStrength } from '../utils/passwordSecurity';
+import {
+  apiLogin,
+  apiChangePassword,
+  apiListUsers,
+  apiCreateUser,
+  apiUpdateUser,
+  apiDeleteUser,
+  apiResetUserPassword,
+  apiGetPatrimonios,
+  apiSavePatrimonio,
+  apiDeletePatrimonio,
+  apiGetEmprestimos,
+  apiSaveEmprestimo,
+  apiDeleteEmprestimo,
+  apiGetManutencoes,
+  apiSaveManutencao,
+  apiDeleteManutencao,
+  apiGetSectors,
+  apiSaveSector,
+  apiDeleteSector,
+  apiGetMovimentacoes,
+  apiSaveMovimentacao,
+  apiDeleteMovimentacao,
+  apiDeleteMovimentacoesByPatrimonio,
+  apiGetInventarios,
+  apiSaveInventario,
+  apiDeleteInventario,
+  apiGetAuditLogs,
+  apiSaveAuditLog,
+  apiDeleteAuditLog,
+  setAuthToken,
+  getAuthToken as getCentralToken,
+  clearAuthToken as clearCentralToken,
+  buildProfileFromUser,
+  userFacingApiError,
+  type PublicUser,
+} from './apiClient';
 
 const STORAGE_KEYS = {
   PATRIMONIOS: 'sispat_patrimonios_v40',
-  MOVIMENTACOES: 'sispat_movimentacoes_v40',
   MANUTENCOES: 'sispat_manutencoes_v40',
   EMPRESTIMOS: 'sispat_emprestimos_v40',
-  AUDIT_LOGS: 'sispat_audit_logs_v40',
-  INVENTARIO: 'sispat_inventario_v40',
-  INVENTARIO_HISTORY: 'sispat_inventario_history_v40',
-  USERS: 'sispat_users_v40',
-  SECTORS: 'sispat_sectors_v40',
 };
+
+// Chave legada de usuários: mantida apenas para purgar resquícios da fase em que
+// os usuários eram espelhados no navegador. O Neon é a única fonte de verdade.
+const LEGACY_USERS_KEY = 'sispat_users_v40';
+
+// Chave legada de setores: mantida apenas para purgar resquícios da fase em que
+// os setores eram espelhados localmente. O Neon é a única fonte de verdade;
+// esta chave nunca é lida nem usada como fallback/espelho.
+const LEGACY_SECTORS_KEY = 'sispat_sectors_v40';
 
 const SESSION_KEYS = {
   AUTHENTICATED: 'sispat_authenticated_v40',
@@ -42,39 +78,31 @@ const SESSION_KEYS = {
   ROLE: 'sispat_current_role_v40',
 };
 
-export const INITIAL_USERS: UserAccount[] = [
-  {
-    id: 'usr-admin',
-    login: 'admin',
-    nomeCompleto: 'Administrador',
-    cpf: '',
-    matricula: 'ADMIN',
-    email: 'admin@sispat.local',
-    telefone: '',
-    cargo: 'Administrador Geral do Sistema',
-    setor: 'Administração',
-    role: 'ADMIN',
-    situacao: 'Ativo',
-    // Senha temporária: Admin#2026!SisPat (troca obrigatória no primeiro acesso)
-    passwordHash: 'pbkdf2$150000$cq8XxwqGbhlSnTqMnvTuWQ==$/fed4RzGo3i6KVfgjzvrCPfSG2y9qUz6aNMrDzLSV8g=',
-    forcePasswordChange: true,
-    dataCriacao: '2026-09-04T00:00:00.000Z',
-    ultimoAcesso: undefined,
-  },
-];
-
-export const INITIAL_SECTORS: SectorItem[] = [];
-
-export const DEFAULT_ACCOUNTS = INITIAL_USERS.map(u => ({
-  email: u.email,
-  role: u.role,
-  name: u.nomeCompleto,
-  cpf: u.cpf,
-  matricula: u.matricula,
-}));
+export type CentralConnectionStatus = 'unknown' | 'online' | 'offline';
 
 export class StorageService {
   private clientIp = 'IP não coletado (modo local)';
+
+  // --- ETAPA 4/4: patrimônios, empréstimos, manutenções, movimentações,
+  // inventários e trilha de auditoria são centralizados (PostgreSQL/Neon). As
+  // listas vivem apenas em memória e são alimentadas pela API central. Nenhum
+  // desses dados é gravado em localStorage/IndexedDB.
+  private patrimoniosMemory: Patrimonio[] = [];
+  private emprestimosMemory: Emprestimo[] = [];
+  private manutencoesMemory: Manutencao[] = [];
+  private movimentacoesMemory: Movimentacao[] = [];
+  private auditLogsMemory: AuditLog[] = [];
+  private inventariosMemory: InventarioSessao[] = [];
+  private centralStatus: CentralConnectionStatus = 'unknown';
+  private legacyCentralKeysCleaned = false;
+
+  // Setores: fonte única central (PostgreSQL/Neon). A memória reflete a última
+  // carga central; nenhum cadastro é lido/gravado em localStorage/IndexedDB.
+  private sectorsMemory: SectorItem[] | null = null;
+
+  // Usuários: fonte única central (PostgreSQL/Neon). Nenhum cadastro de usuário
+  // é gravado em localStorage/IndexedDB; a memória reflete exclusivamente o Neon.
+  private usersMemory: UserAccount[] | null = null;
 
   setClientIp(ip?: string) {
     if (ip) this.clientIp = ip;
@@ -92,35 +120,123 @@ export class StorageService {
     window.dispatchEvent(new CustomEvent('sispat_data_changed'));
   }
 
-  // --- PATRIMÔNIOS ---
+  // --- PATRIMÔNIOS (fonte central única: PostgreSQL/Neon) ---
   getPatrimonios(): Patrimonio[] {
-    const data = localStorage.getItem(STORAGE_KEYS.PATRIMONIOS);
-    if (!data) {
-      localStorage.setItem(STORAGE_KEYS.PATRIMONIOS, JSON.stringify([]));
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(data);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      localStorage.setItem(STORAGE_KEYS.PATRIMONIOS, JSON.stringify([]));
-      return [];
-    }
+    return JSON.parse(JSON.stringify(this.patrimoniosMemory)) as Patrimonio[];
   }
 
   private setPatrimonios(items: Patrimonio[]) {
-    localStorage.setItem(STORAGE_KEYS.PATRIMONIOS, JSON.stringify(items));
+    this.patrimoniosMemory = items;
     this.notifyListeners();
   }
 
-  savePatrimonio(patrimonio: Patrimonio, usuario: UserProfile): Patrimonio {
+  // Status da conexão com o banco central (Neon).
+  getCentralConnectionStatus(): CentralConnectionStatus {
+    return this.centralStatus;
+  }
+
+  isCentralOnline(): boolean {
+    return this.centralStatus === 'online';
+  }
+
+  // Remove as chaves legadas centralizadas (patrimônios, empréstimos,
+  // manutenções, movimentações, auditoria e inventários) do armazenamento
+  // local SOMENTE após uma carga central bem-sucedida. O espelho IndexedDB
+  // (desktopPersistence) foi desativado na Etapa 8: nenhum dado é reescrito.
+  private cleanupLegacyCentralKeys() {
+    if (this.legacyCentralKeysCleaned) return;
+    this.legacyCentralKeysCleaned = true;
+    try {
+      localStorage.removeItem(STORAGE_KEYS.PATRIMONIOS);
+      localStorage.removeItem(STORAGE_KEYS.EMPRESTIMOS);
+      localStorage.removeItem(STORAGE_KEYS.MANUTENCOES);
+      localStorage.removeItem('sispat_movimentacoes_v40');
+      localStorage.removeItem('sispat_audit_logs_v40');
+      localStorage.removeItem('sispat_inventario_v40');
+      localStorage.removeItem('sispat_inventario_history_v40');
+      // Usuários legados (espelhamento local da Etapa 2): não são mais fonte de
+      // dados — apenas purga local.
+      localStorage.removeItem(LEGACY_USERS_KEY);
+      // Setores legados (espelhamento local da fase anterior): não são mais
+      // fonte de dados/fallback — apenas purga local.
+      localStorage.removeItem(LEGACY_SECTORS_KEY);
+    } catch {
+      // Nunca quebrar o fluxo por causa da limpeza das chaves legadas.
+    }
+  }
+
+  // Busca as listas autoritativas no banco central (patrimônios, empréstimos,
+  // manutenções, movimentações e inventários). Em falha, o central é tratado
+  // como indisponível e os dados em memória permanecem apenas como
+  // visualização somente leitura (banner avisa que estão desatualizados).
+  async refreshCentralDataFromApi(): Promise<{
+    patrimonios: Patrimonio[];
+    emprestimos: Emprestimo[];
+    manutencoes: Manutencao[];
+    movimentacoes: Movimentacao[];
+    inventarios: InventarioSessao[];
+  }> {
+    if (!this.isLoggedIn()) {
+      this.centralStatus = 'unknown';
+      return { patrimonios: [], emprestimos: [], manutencoes: [], movimentacoes: [], inventarios: [] };
+    }
+    try {
+      const [patResult, empResult, manResult, movResult, invResult] = await Promise.all([
+        apiGetPatrimonios(),
+        apiGetEmprestimos(),
+        apiGetManutencoes(),
+        apiGetMovimentacoes(),
+        apiGetInventarios(),
+      ]);
+      this.patrimoniosMemory = patResult.patrimonios;
+      this.emprestimosMemory = empResult.emprestimos;
+      this.manutencoesMemory = manResult.manutencoes;
+      this.movimentacoesMemory = movResult.movimentacoes;
+      this.inventariosMemory = invResult.inventarios;
+      this.centralStatus = 'online';
+      this.cleanupLegacyCentralKeys();
+      this.notifyListeners();
+      return {
+        patrimonios: this.getPatrimonios(),
+        emprestimos: this.getEmprestimos(),
+        manutencoes: this.getManutencoes(),
+        movimentacoes: this.getMovimentacoes(),
+        inventarios: this.getInventarioHistorico(),
+      };
+    } catch (error) {
+      this.centralStatus = 'offline';
+      // Em falha de refresh, mantém os dados já carregados em memória como
+      // visualização somente leitura (banner avisa que estão desatualizados).
+      throw error;
+    }
+  }
+
+  // A trilha de auditoria é lida à parte do refresh principal, pois exige o
+  // perfil com canViewAudit (ADMIN/GESTOR/AUDITOR). O frontend decide quando
+  // chamar (evita 403 e respeita o RBAC no backend).
+  async refreshAuditLogsFromApi(): Promise<AuditLog[]> {
+    if (!this.isLoggedIn()) {
+      this.auditLogsMemory = [];
+      return [];
+    }
+    const result = await apiGetAuditLogs();
+    this.auditLogsMemory = result.auditLogs;
+    return this.getAuditLogs();
+  }
+
+  async refreshPatrimoniosFromApi(): Promise<Patrimonio[]> {
+    const data = await this.refreshCentralDataFromApi();
+    return data.patrimonios;
+  }
+
+  async savePatrimonio(patrimonio: Patrimonio, usuario: UserProfile): Promise<Patrimonio> {
     this.assertRole(usuario, ['ADMIN', 'GESTOR', 'OPERADOR', 'TECNICO'], 'salvar patrimônios');
     const items = this.getPatrimonios();
+    if (!patrimonio.codigoPatrimonial?.trim()) throw new Error('Informe o código patrimonial/tombo.');
     const duplicateCode = items.find(p =>
       p.id !== patrimonio.id &&
-      p.codigoPatrimonial.trim().toLowerCase() === (patrimonio.codigoPatrimonial || '').trim().toLowerCase()
+      p.codigoPatrimonial.trim().toLowerCase() === patrimonio.codigoPatrimonial.trim().toLowerCase()
     );
-    if (!patrimonio.codigoPatrimonial?.trim()) throw new Error('Informe o código patrimonial/tombo.');
     if (duplicateCode) throw new Error(`Já existe um patrimônio com o tombo ${patrimonio.codigoPatrimonial}.`);
     if (patrimonio.codigoBarras?.trim()) {
       const duplicateBarcode = items.find(p => p.id !== patrimonio.id && p.codigoBarras?.trim() === patrimonio.codigoBarras.trim());
@@ -130,111 +246,105 @@ export class StorageService {
       const duplicateQr = items.find(p => p.id !== patrimonio.id && p.qrCode?.trim().toLowerCase() === patrimonio.qrCode.trim().toLowerCase());
       if (duplicateQr) throw new Error(`O QR Code ${patrimonio.qrCode} já está vinculado ao patrimônio ${duplicateQr.codigoPatrimonial}.`);
     }
+
     const existingIndex = items.findIndex(p => p.id === patrimonio.id);
-    
     const now = new Date().toISOString();
-    let isNew = false;
-    
-    if (existingIndex >= 0) {
-      const oldItem = items[existingIndex];
-      const updatedItem: Patrimonio = {
-        ...patrimonio,
-        ultimaAtualizacao: now,
-      };
-      items[existingIndex] = updatedItem;
+    const isNew = existingIndex < 0;
+    const oldItem = isNew ? undefined : items[existingIndex];
+    const payload: Patrimonio = {
+      ...patrimonio,
+      id: patrimonio.id || `pat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      codigoPatrimonial: patrimonio.codigoPatrimonial.trim(),
+      codigoBarras: patrimonio.codigoBarras || '',
+      qrCode: patrimonio.qrCode || '',
+      dataCadastro: patrimonio.dataCadastro || now,
+      ultimaAtualizacao: now,
+    };
 
-      // Track movement if location changed
-      if (
-        oldItem.bloco !== updatedItem.bloco ||
-        oldItem.laboratorio !== updatedItem.laboratorio ||
-        oldItem.sala !== updatedItem.sala ||
-        oldItem.responsavelNome !== updatedItem.responsavelNome
-      ) {
-        this.addMovimentacaoInternal({
-          id: 'mov-' + Date.now(),
-          patrimonioId: updatedItem.id,
-          codigoPatrimonial: updatedItem.codigoPatrimonial,
-          patrimonioNome: updatedItem.nome,
-          dataHora: now,
-          usuarioNome: usuario.name,
-          usuarioPerfil: usuario.role,
-          localAnterior: `${oldItem.bloco} / ${oldItem.laboratorio} / ${oldItem.sala}`,
-          localNovo: `${updatedItem.bloco} / ${updatedItem.laboratorio} / ${updatedItem.sala}`,
-          responsavelAnterior: oldItem.responsavelNome,
-          responsavelNovo: updatedItem.responsavelNome,
-          motivo: 'Atualização cadastral de localização/responsável',
-          tipoOperacao: 'Transferência',
-        });
-      }
+    // Grava no banco central (Neon). Se falhar, a exceção impede qualquer
+    // atualização em memória — o usuário vê a mensagem de erro.
+    await apiSavePatrimonio(payload);
 
-      this.addAuditLogInternal({
-        id: 'log-' + Date.now(),
-        dataHora: now,
-        usuarioNome: usuario.name,
-        usuarioPerfil: usuario.role,
-        acao: 'Atualização de Patrimonio',
-        entidade: 'Patrimônio',
-        entidadeId: updatedItem.codigoPatrimonial,
-        detalhe: `Atualizado bem "${updatedItem.nome}" (${updatedItem.codigoPatrimonial}). Situacao: ${updatedItem.situacao}`,
-        ip: this.getAuditIp(),
-      });
+    // Atualiza memória apenas após sucesso da API.
+    const next = this.getPatrimonios();
+    const idx = next.findIndex(p => p.id === payload.id);
+    if (idx >= 0) { next[idx] = payload; } else { next.unshift(payload); }
+    this.setPatrimonios(next);
 
-      this.setPatrimonios(items);
-      return updatedItem;
-    } else {
-      isNew = true;
-      const newItem: Patrimonio = {
-        ...patrimonio,
-        id: patrimonio.id || 'pat-' + Date.now(),
-        codigoPatrimonial: patrimonio.codigoPatrimonial.trim(),
-        codigoBarras: patrimonio.codigoBarras || '',
-        qrCode: patrimonio.qrCode || '',
-        dataCadastro: now,
-        ultimaAtualizacao: now,
-      };
-      items.unshift(newItem);
-
-      this.addMovimentacaoInternal({
+    // Movimentação e auditoria são gravadas no banco central (Neon). Se
+    // qualquer uma falhar, a exceção impede que a operação seja declarada
+    // concluída sem a devida confirmação do banco central.
+    if (isNew) {
+      await this.addMovimentacaoInternal({
         id: 'mov-' + Date.now(),
-        patrimonioId: newItem.id,
-        codigoPatrimonial: newItem.codigoPatrimonial,
-        patrimonioNome: newItem.nome,
+        patrimonioId: payload.id,
+        codigoPatrimonial: payload.codigoPatrimonial,
+        patrimonioNome: payload.nome,
         dataHora: now,
         usuarioNome: usuario.name,
         usuarioPerfil: usuario.role,
         localAnterior: 'Inclusão Inicial',
-        localNovo: `${newItem.bloco} / ${newItem.laboratorio} / ${newItem.sala}`,
+        localNovo: `${payload.bloco} / ${payload.laboratorio} / ${payload.sala}`,
         responsavelAnterior: 'Não informado',
-        responsavelNovo: newItem.responsavelNome,
+        responsavelNovo: payload.responsavelNome,
         motivo: 'Inclusão de novo bem patrimonial no acervo público',
         tipoOperacao: 'Cadastro',
       });
-
-      this.addAuditLogInternal({
+      await this.addAuditLogInternal({
         id: 'log-' + Date.now(),
         dataHora: now,
         usuarioNome: usuario.name,
         usuarioPerfil: usuario.role,
         acao: 'Cadastro de Patrimônio',
         entidade: 'Patrimônio',
-        entidadeId: newItem.codigoPatrimonial,
-        detalhe: `Cadastrado novo patrimônio "${newItem.nome}" (${newItem.codigoPatrimonial}) - Valor: R$ ${newItem.valor.toFixed(2)}`,
+        entidadeId: payload.codigoPatrimonial,
+        detalhe: `Cadastrado novo patrimônio "${payload.nome}" (${payload.codigoPatrimonial}) - Valor: R$ ${payload.valor.toFixed(2)}`,
         ip: this.getAuditIp(),
       });
-
-      this.setPatrimonios(items);
-      return newItem;
+    } else if (
+      oldItem && (
+        oldItem.bloco !== payload.bloco ||
+        oldItem.laboratorio !== payload.laboratorio ||
+        oldItem.sala !== payload.sala ||
+        oldItem.responsavelNome !== payload.responsavelNome
+      )
+    ) {
+      await this.addMovimentacaoInternal({
+        id: 'mov-' + Date.now(),
+        patrimonioId: payload.id,
+        codigoPatrimonial: payload.codigoPatrimonial,
+        patrimonioNome: payload.nome,
+        dataHora: now,
+        usuarioNome: usuario.name,
+        usuarioPerfil: usuario.role,
+        localAnterior: `${oldItem.bloco} / ${oldItem.laboratorio} / ${oldItem.sala}`,
+        localNovo: `${payload.bloco} / ${payload.laboratorio} / ${payload.sala}`,
+        responsavelAnterior: oldItem.responsavelNome,
+        responsavelNovo: payload.responsavelNome,
+        motivo: 'Atualização cadastral de localização/responsável',
+        tipoOperacao: 'Transferência',
+      });
+      await this.addAuditLogInternal({
+        id: 'log-' + Date.now(),
+        dataHora: now,
+        usuarioNome: usuario.name,
+        usuarioPerfil: usuario.role,
+        acao: 'Atualização de Patrimonio',
+        entidade: 'Patrimônio',
+        entidadeId: payload.codigoPatrimonial,
+        detalhe: `Atualizado bem "${payload.nome}" (${payload.codigoPatrimonial}). Situacao: ${payload.situacao}`,
+        ip: this.getAuditIp(),
+      });
     }
+
+    return Promise.resolve(payload);
   }
 
-  savePatrimoniosBulk(patrimonios: Patrimonio[], usuario: UserProfile): Patrimonio[] {
+  async savePatrimoniosBulk(patrimonios: Patrimonio[], usuario: UserProfile): Promise<{ saved: Patrimonio[]; errors: string[] }> {
     this.assertRole(usuario, ['ADMIN', 'GESTOR', 'OPERADOR', 'TECNICO'], 'cadastrar patrimônios em lote');
-    const items = this.getPatrimonios();
+    const saved: Patrimonio[] = [];
+    const errors: string[] = [];
     const now = new Date().toISOString();
-    const insertedItems: Patrimonio[] = [];
-    const existingTombos = new Set(items.map(p => p.codigoPatrimonial.trim().toLowerCase()));
-    const existingBarcodes = new Set(items.map(p => p.codigoBarras?.trim()).filter(Boolean));
-    const existingQrs = new Set(items.map(p => p.qrCode?.trim().toLowerCase()).filter(Boolean));
     const batchTombos = new Set<string>();
     const batchBarcodes = new Set<string>();
     const batchQrs = new Set<string>();
@@ -244,139 +354,178 @@ export class StorageService {
       const tombo = p.codigoPatrimonial?.trim();
       const barcode = p.codigoBarras?.trim() || '';
       const qr = p.qrCode?.trim() || '';
-      if (!tombo) throw new Error(`Item ${i + 1}: informe o código patrimonial/tombo.`);
+      if (!tombo) { errors.push(`Item ${i + 1}: informe o código patrimonial/tombo.`); continue; }
       const tomboKey = tombo.toLowerCase();
-      if (existingTombos.has(tomboKey) || batchTombos.has(tomboKey)) throw new Error(`Tombo duplicado no lote ou na base: ${tombo}.`);
-      if (barcode && (existingBarcodes.has(barcode) || batchBarcodes.has(barcode))) throw new Error(`Código de barras duplicado no lote ou na base: ${barcode}.`);
+      if (batchTombos.has(tomboKey)) { errors.push(`Tombo duplicado no lote: ${tombo}.`); continue; }
+      if (barcode && batchBarcodes.has(barcode)) { errors.push(`Código de barras duplicado no lote: ${barcode}.`); continue; }
       const qrKey = qr.toLowerCase();
-      if (qr && (existingQrs.has(qrKey) || batchQrs.has(qrKey))) throw new Error(`QR Code duplicado no lote ou na base: ${qr}.`);
+      if (qr && batchQrs.has(qrKey)) { errors.push(`QR Code duplicado no lote: ${qr}.`); continue; }
 
       batchTombos.add(tomboKey);
       if (barcode) batchBarcodes.add(barcode);
       if (qr) batchQrs.add(qrKey);
 
-      const newItem: Patrimonio = {
-        ...p,
-        id: p.id || `pat-${Date.now()}-${i}`,
-        codigoPatrimonial: tombo,
-        codigoBarras: barcode,
-        qrCode: qr,
-        dataCadastro: p.dataCadastro || now,
-        ultimaAtualizacao: now,
-      };
+      try {
+        // savePatrimonio já persiste no banco central, adiciona em memória,
+        // registra movimentação "Cadastro" e log de auditoria do item.
+        const result = await this.savePatrimonio({ ...p, id: p.id || undefined }, usuario);
+        saved.push(result);
+      } catch (err: any) {
+        errors.push(`Item ${i + 1} (${tombo}): ${err instanceof Error ? err.message : 'falha ao salvar.'}`);
+      }
+    }
 
-      items.unshift(newItem);
-      insertedItems.push(newItem);
-
-      this.addMovimentacaoInternal({
-        id: `mov-${Date.now()}-${i}`,
-        patrimonioId: newItem.id,
-        codigoPatrimonial: newItem.codigoPatrimonial,
-        patrimonioNome: newItem.nome,
+    if (saved.length > 0) {
+      await this.addAuditLogInternal({
+        id: 'log-' + Date.now(),
         dataHora: now,
         usuarioNome: usuario.name,
         usuarioPerfil: usuario.role,
-        localAnterior: 'Inclusão inicial em lote',
-        localNovo: `${newItem.bloco} / ${newItem.laboratorio} / ${newItem.sala}`,
-        responsavelAnterior: 'Não informado',
-        responsavelNovo: newItem.responsavelNome,
-        motivo: 'Inclusão em lote de bem patrimonial',
-        tipoOperacao: 'Cadastro',
+        acao: 'Cadastro em Lote de Patrimônios',
+        entidade: 'Patrimônio',
+        entidadeId: `${saved.length} itens`,
+        detalhe: `Cadastrados ${saved.length} novos bens via entrada em lote. ${errors.length > 0 ? `${errors.length} item(ns) falharam.` : ''}`,
+        ip: this.getAuditIp(),
       });
     }
 
-    this.addAuditLogInternal({
-      id: 'log-' + Date.now(),
-      dataHora: now,
-      usuarioNome: usuario.name,
-      usuarioPerfil: usuario.role,
-      acao: 'Cadastro em Lote de Patrimônios',
-      entidade: 'Patrimônio',
-      entidadeId: `${insertedItems.length} itens`,
-      detalhe: `Cadastrados ${insertedItems.length} novos bens via entrada em lote.`,
-      ip: this.getAuditIp(),
-    });
-
-    this.setPatrimonios(items);
-    return insertedItems;
+    return { saved, errors };
   }
 
   // --- USER ACCOUNTS MANAGEMENT (ADMIN EXCLUSIVE) ---
-  getUsers(): UserAccount[] {
-    const data = localStorage.getItem(STORAGE_KEYS.USERS);
-    if (!data) {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
-      return INITIAL_USERS;
-    }
-    try {
-      const parsed: UserAccount[] = JSON.parse(data);
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
-        return INITIAL_USERS;
-      }
-      return parsed;
-    } catch {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
-      return INITIAL_USERS;
-    }
+  // Neon é a ÚNICA fonte de verdade dos usuários. A memória reflete a última
+  // carga central; nenhum cadastro é lido/gravado em localStorage/IndexedDB.
+
+  // Converte um usuário público (sem passwordHash) retornado pela API em uma
+  // conta para exibição no frontend.
+  private toUserAccount(publicUser: PublicUser): UserAccount {
+    return {
+      id: publicUser.id,
+      login: publicUser.login,
+      nomeCompleto: publicUser.nomeCompleto,
+      cpf: publicUser.cpf,
+      matricula: publicUser.matricula,
+      email: publicUser.email,
+      telefone: publicUser.telefone || '',
+      cargo: publicUser.cargo,
+      setor: publicUser.setor,
+      role: publicUser.role as UserRole,
+      situacao: publicUser.situacao,
+      passwordHash: '',
+      forcePasswordChange: publicUser.forcePasswordChange,
+      dataCriacao: publicUser.dataCriacao,
+      ultimoAcesso: publicUser.ultimoAcesso,
+      tentativasInvalidas: publicUser.tentativasInvalidas,
+    };
   }
 
-  private saveUsers(users: UserAccount[]) {
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+  getUsers(): UserAccount[] {
+    const users = this.usersMemory ?? [];
+    return JSON.parse(JSON.stringify(users)) as UserAccount[];
+  }
+
+  private setUsers(users: UserAccount[]) {
+    this.usersMemory = users;
     this.notifyListeners();
   }
 
-  // --- SECTORS MANAGEMENT ---
+  // Busca os usuários autoritativos no Neon via GET /api/auth/users (apiListUsers).
+  // Em falha, a exceção propaga e a memória anterior é mantida.
+  async refreshUsersFromApi(): Promise<UserAccount[]> {
+    const result = await apiListUsers();
+    this.usersMemory = result.users.map(u => this.toUserAccount(u));
+    this.notifyListeners();
+    return this.getUsers();
+  }
+
+  // --- SECTORS MANAGEMENT (fonte única central: PostgreSQL/Neon) ---
+  // Nenhum cadastro de setor é lido/gravado em localStorage/IndexedDB; a
+  // memória reflete exclusivamente o Neon durante a sessão.
   getSectors(): SectorItem[] {
-    const data = localStorage.getItem(STORAGE_KEYS.SECTORS);
-    if (!data) {
-      localStorage.setItem(STORAGE_KEYS.SECTORS, JSON.stringify([]));
-      return [];
-    }
+    return this.sectorsMemory ? JSON.parse(JSON.stringify(this.sectorsMemory)) : [];
+  }
+
+  // Remove a chave legada de setores (espelho local da fase anterior). Nunca é
+  // lida nem alimentada; executa somente como purga best-effort local.
+  private cleanupLegacySectorsKey() {
     try {
-      const parsed = JSON.parse(data);
-      return Array.isArray(parsed) ? parsed : [];
+      localStorage.removeItem(LEGACY_SECTORS_KEY);
     } catch {
-      localStorage.setItem(STORAGE_KEYS.SECTORS, JSON.stringify([]));
-      return [];
+      // Limpeza de chave legada é best-effort.
     }
   }
 
-  saveSector(sector: SectorItem, performer: UserProfile): SectorItem {
-    this.assertRole(performer, ['ADMIN'], 'alterar setores');
-    const sectors = this.getSectors();
-    const index = sectors.findIndex(s => s.id === sector.id);
-    if (index >= 0) {
-      sectors[index] = sector;
-    } else {
-      sectors.push({
-        ...sector,
-        id: sector.id || 'sec-' + Date.now(),
-      });
+  // Busca a lista autoritativa de setores no Neon via GET /api/db/sectors
+  // (apiGetSectors). Em falha, a exceção propaga e o cache em memória da
+  // sessão permanece apenas para exibição somente leitura — sem fallback local.
+  async refreshSectorsFromApi(): Promise<SectorItem[]> {
+    if (!this.isLoggedIn()) return this.getSectors();
+    try {
+      const result = await apiGetSectors();
+      const list = Array.isArray(result.sectors) ? result.sectors : [];
+      this.sectorsMemory = list;
+      this.cleanupLegacySectorsKey();
+      return this.getSectors();
+    } catch (error) {
+      // Preserva o cache em memória da sessão; nenhum dado é gravado localmente.
+      throw error;
     }
-    localStorage.setItem(STORAGE_KEYS.SECTORS, JSON.stringify(sectors));
-    
-    this.addAuditLogInternal({
+  }
+
+  async saveSector(sector: SectorItem, performer: UserProfile): Promise<SectorItem> {
+    this.assertRole(performer, ['ADMIN'], 'alterar setores');
+    if (!sector.nome?.trim()) throw new Error('Informe o nome do setor.');
+    if (!sector.sigla?.trim()) throw new Error('Informe a sigla do setor.');
+    if (!sector.responsavel?.trim()) throw new Error('Informe o responsável pelo setor.');
+
+    const payload: SectorItem = {
+      ...sector,
+      id: sector.id || 'sec-' + Date.now(),
+      nome: sector.nome.trim(),
+      sigla: sector.sigla.trim().toUpperCase(),
+      responsavel: sector.responsavel.trim(),
+    };
+
+    const sectors = this.getSectors();
+    const index = sectors.findIndex(s => s.id === payload.id);
+
+    // Central-first: grava exclusivamente no Neon via apiSaveSector(). Em
+    // falha, a exceção impede qualquer atualização em memória — sem espelho.
+    await apiSaveSector(payload);
+
+    // Atualiza a memória apenas após a confirmação do Neon.
+    const next = this.getSectors();
+    const idx = next.findIndex(s => s.id === payload.id);
+    if (idx >= 0) { next[idx] = payload; } else { next.push(payload); }
+    this.sectorsMemory = next;
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
       usuarioPerfil: performer.role,
       acao: index >= 0 ? 'Alteração de Setor' : 'Criação de Setor',
       entidade: 'Sistema',
-      entidadeId: sector.sigla,
-      detalhe: `Setor "${sector.nome}" (${sector.sigla}) ${index >= 0 ? 'atualizado' : 'cadastrado'}. Responsável: ${sector.responsavel}`,
+      entidadeId: payload.sigla,
+      detalhe: `Setor "${payload.nome}" (${payload.sigla}) ${index >= 0 ? 'atualizado' : 'cadastrado'} no banco central. Responsável: ${payload.responsavel}`,
       ip: this.getAuditIp(),
     });
 
     this.notifyListeners();
-    return sector;
+    return payload;
   }
 
-  deleteSector(sectorId: string, performer: UserProfile) {
+  async deleteSector(sectorId: string, performer: UserProfile): Promise<void> {
     this.assertRole(performer, ['ADMIN'], 'excluir setores');
-    const sectors = this.getSectors().filter(s => s.id !== sectorId);
-    localStorage.setItem(STORAGE_KEYS.SECTORS, JSON.stringify(sectors));
-    this.addAuditLogInternal({
+    if (!sectorId) throw new Error('Identificador do setor é obrigatório.');
+
+    // Central-first: exclui exclusivamente no Neon via apiDeleteSector(). Em
+    // falha, a exceção impede qualquer atualização em memória — sem espelho.
+    await apiDeleteSector(sectorId);
+
+    const next = this.getSectors().filter(s => s.id !== sectorId);
+    this.sectorsMemory = next;
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
@@ -384,7 +533,7 @@ export class StorageService {
       acao: 'Exclusão de Setor',
       entidade: 'Sistema',
       entidadeId: sectorId,
-      detalhe: `Setor ID ${sectorId} excluído do cadastro institucional.`,
+      detalhe: `Setor ID ${sectorId} excluído do cadastro institucional (banco central).`,
       ip: this.getAuditIp(),
     });
     this.notifyListeners();
@@ -396,74 +545,34 @@ export class StorageService {
       throw new Error('Apenas Administradores Gerais podem cadastrar novos usuários no SISPAT.');
     }
 
+    // Central-only: cadastra no Neon via POST /api/auth/users. Em falha, a
+    // exceção propaga e NADA é gravado localmente (sem espelho/fallback).
+    const central = await apiCreateUser(userData as Partial<UserAccount>);
+    const account = this.toUserAccount(central.user);
+
+    // A memória apenas reflete o que o Neon confirmou.
     const users = this.getUsers();
+    const idx = users.findIndex(u => u.id === account.id);
+    if (idx >= 0) users[idx] = account; else users.push(account);
+    this.setUsers(users);
 
-    // Check duplicate CPF or Email or Login
-    const cleanEmail = (userData.email || '').trim().toLowerCase();
-    const cleanCpf = (userData.cpf || '').trim();
-
-    if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
-      throw new Error(`O e-mail institucional "${cleanEmail}" já está cadastrado.`);
-    }
-
-    if (users.some(u => u.cpf.replace(/\D/g, '') === cleanCpf.replace(/\D/g, ''))) {
-      throw new Error(`O CPF "${cleanCpf}" já possui um cadastro ativo.`);
-    }
-
-    // Auto-generate Login (e.g. joao.silva)
-    let baseLogin = (userData.login || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
-    if (!baseLogin) baseLogin = (userData.email || '').split('@')[0].toLowerCase().replace(/[^a-z0-9.]/g, '');
-    if (!baseLogin) {
-      baseLogin = (userData.nomeCompleto || 'usuario').toLowerCase().split(' ').slice(0, 2).join('.');
-    }
-    
-    let generatedLogin = baseLogin;
-    let counter = 1;
-    while (users.some(u => u.login.toLowerCase() === generatedLogin.toLowerCase())) {
-      generatedLogin = `${baseLogin}${counter}`;
-      counter++;
-    }
-
-    // Senha temporária gerada com Web Crypto API.
-    const tempPassword = generateTemporaryPassword();
-
-    const newUser: UserAccount = {
-      id: 'usr-' + Date.now(),
-      login: generatedLogin,
-      nomeCompleto: userData.nomeCompleto || '',
-      cpf: cleanCpf,
-      matricula: userData.matricula || '',
-      email: cleanEmail,
-      telefone: userData.telefone || '',
-      cargo: userData.cargo || '',
-      setor: userData.setor || '',
-      role: userData.role || 'OPERADOR',
-      situacao: userData.situacao || 'Ativo',
-      passwordHash: await hashPassword(tempPassword),
-      forcePasswordChange: true, // Obrigatório trocar no 1º login
-      dataCriacao: new Date().toISOString(),
-    };
-
-    users.push(newUser);
-    this.saveUsers(users);
-
-    this.addAuditLogInternal({
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
       usuarioPerfil: performer.role,
-      acao: 'Criação de Usuário',
+      acao: 'Criação de Usuário (Central)',
       entidade: 'Usuário',
-      entidadeId: newUser.login,
-      detalhe: `Usuário "${newUser.nomeCompleto}" (${newUser.login}) cadastrado com perfil ${newUser.role} no setor "${newUser.setor}". Senha temporária gerada.`,
+      entidadeId: account.login,
+      detalhe: `Usuário "${account.nomeCompleto}" (${account.login}) cadastrado no banco central com perfil ${account.role}. Senha temporária gerada.`,
       ip: this.getAuditIp(),
     });
 
-    return { user: newUser, tempPassword };
+    return { user: account, tempPassword: central.tempPassword };
   }
 
   // Admin User Update
-  updateUser(userData: UserAccount, performer: UserProfile): UserAccount {
+  async updateUser(userData: UserAccount, performer: UserProfile): Promise<UserAccount> {
     if (performer.role !== 'ADMIN') {
       throw new Error('Apenas o Administrador Geral pode editar dados e permissões de usuários.');
     }
@@ -476,7 +585,7 @@ export class StorageService {
     }
 
     const oldUser = users[index];
-    
+
     // Safety check: Cannot demote or disable the last active Admin
     if (oldUser.role === 'ADMIN' && (userData.role !== 'ADMIN' || userData.situacao !== 'Ativo')) {
       const activeAdmins = users.filter(u => u.role === 'ADMIN' && u.situacao === 'Ativo');
@@ -485,8 +594,9 @@ export class StorageService {
       }
     }
 
-    users[index] = {
-      ...users[index],
+    // Central-first: persiste no Neon via PUT /api/auth/users. Se falhar, a
+    // exceção impede qualquer atualização em memória — sem espelho local.
+    const central = await apiUpdateUser(userData.id, {
       nomeCompleto: userData.nomeCompleto,
       cpf: userData.cpf,
       matricula: userData.matricula,
@@ -496,27 +606,31 @@ export class StorageService {
       setor: userData.setor,
       role: userData.role,
       situacao: userData.situacao,
-    };
+    });
 
-    this.saveUsers(users);
+    const updated = this.toUserAccount(central.user);
+    const next = this.getUsers();
+    const idx = next.findIndex(u => u.id === updated.id);
+    if (idx >= 0) next[idx] = updated;
+    this.setUsers(next);
 
-    this.addAuditLogInternal({
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
       usuarioPerfil: performer.role,
       acao: 'Alteração de Dados do Usuário',
       entidade: 'Usuário',
-      entidadeId: userData.login,
-      detalhe: `Atualizado cadastro do usuário "${userData.nomeCompleto}" (${userData.login}). Perfil: ${userData.role}, Situação: ${userData.situacao}`,
+      entidadeId: updated.login,
+      detalhe: `Atualizado cadastro do usuário "${updated.nomeCompleto}" (${updated.login}). Perfil: ${updated.role}, Situação: ${updated.situacao}`,
       ip: this.getAuditIp(),
     });
 
-    return users[index];
+    return updated;
   }
 
   // Admin Toggle User Status (Lock/Unlock / Active/Inactive)
-  toggleUserStatus(userId: string, newStatus: 'Ativo' | 'Inativo' | 'Bloqueado', performer: UserProfile): UserAccount {
+  async toggleUserStatus(userId: string, newStatus: 'Ativo' | 'Inativo' | 'Bloqueado', performer: UserProfile): Promise<UserAccount> {
     if (performer.role !== 'ADMIN') {
       throw new Error('Apenas o Administrador Geral pode alterar o status do usuário.');
     }
@@ -534,22 +648,28 @@ export class StorageService {
     }
 
     const oldStatus = user.situacao;
-    user.situacao = newStatus;
-    this.saveUsers(users);
 
-    this.addAuditLogInternal({
+    // Central-first: grava o novo status no Neon. Em falha, nada muda em memória.
+    const central = await apiUpdateUser(user.id, { situacao: newStatus });
+    const updated = this.toUserAccount(central.user);
+    const next = this.getUsers();
+    const idx = next.findIndex(u => u.id === updated.id);
+    if (idx >= 0) next[idx] = updated;
+    this.setUsers(next);
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
       usuarioPerfil: performer.role,
       acao: `Alteração de Status: ${oldStatus} -> ${newStatus}`,
       entidade: 'Usuário',
-      entidadeId: user.login,
-      detalhe: `Status do usuário "${user.nomeCompleto}" (${user.login}) alterado para ${newStatus}.`,
+      entidadeId: updated.login,
+      detalhe: `Status do usuário "${updated.nomeCompleto}" (${updated.login}) alterado para ${newStatus} no banco central.`,
       ip: this.getAuditIp(),
     });
 
-    return user;
+    return updated;
   }
 
   // Admin Password Reset
@@ -558,66 +678,55 @@ export class StorageService {
       throw new Error('Apenas o Administrador Geral pode redefinir senhas de usuários.');
     }
 
-    const users = this.getUsers();
-    const user = users.find(u => u.id === userId);
+    // Central-only: redefinição de senha executada no Neon (PUT
+    // /api/auth/users/:id/reset-password). Em falha, a exceção propaga.
+    const central = await apiResetUserPassword(userId);
 
-    if (!user) throw new Error('Usuário não encontrado.');
-
-    const tempPassword = generateTemporaryPassword();
-
-    user.passwordHash = await hashPassword(tempPassword);
-    user.forcePasswordChange = true;
-    user.tentativasInvalidas = 0;
-    this.saveUsers(users);
-
-    this.addAuditLogInternal({
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
       usuarioPerfil: performer.role,
-      acao: 'Redefinição de Senha do Usuário',
+      acao: 'Redefinição de Senha do Usuário (Central)',
       entidade: 'Usuário',
-      entidadeId: user.login,
-      detalhe: `Senha do usuário "${user.nomeCompleto}" (${user.login}) redefinida pelo Administrador Geral. Nova troca de senha exigida no próximo acesso.`,
+      entidadeId: userId,
+      detalhe: `Senha do usuário "${userId}" redefinida no banco central. Nova troca exigida no próximo acesso.`,
       ip: this.getAuditIp(),
     });
 
-    return { tempPassword };
+    return { tempPassword: central.tempPassword };
   }
 
   // Change Password by Logged-in User (or Forced First-Time Change)
   async changePassword(userId: string, newPassword: string): Promise<{ success: boolean; message?: string }> {
-    const users = this.getUsers();
-    const user = users.find(u => u.id === userId || u.login === userId || u.email === userId);
-    if (!user) return { success: false, message: 'Usuário não encontrado no sistema.' };
-
     const strengthError = validatePasswordStrength(newPassword);
     if (strengthError) return { success: false, message: strengthError };
 
-    const same = await verifyPassword(newPassword, user.passwordHash);
-    if (same.valid) return { success: false, message: 'A nova senha não pode ser igual à senha atual.' };
+    // Central-only: o servidor valida força e igualdade à senha atual e grava o
+    // novo hash no Neon (POST /api/auth/change-password). Não há fallback local.
+    try {
+      await apiChangePassword(newPassword);
+      await this.addAuditLogInternal({
+        id: 'log-' + Date.now(), dataHora: new Date().toISOString(), usuarioNome: this.getCurrentUser()?.name || userId,
+        usuarioPerfil: this.getCurrentUser()?.role || 'VISITANTE', acao: 'Troca de Senha Realizada (Central)', entidade: 'Usuário', entidadeId: userId,
+        detalhe: `Troca de senha confirmada na API central para "${userId}".`, ip: this.getAuditIp(),
+      });
+    } catch (err) {
+      return { success: false, message: userFacingApiError(err) };
+    }
 
-    user.passwordHash = await hashPassword(newPassword);
-    user.forcePasswordChange = false;
-    user.tentativasInvalidas = 0;
-    this.saveUsers(users);
-
-    this.addAuditLogInternal({
-      id: 'log-' + Date.now(), dataHora: new Date().toISOString(), usuarioNome: user.nomeCompleto,
-      usuarioPerfil: user.role, acao: 'Troca de Senha Realizada', entidade: 'Usuário', entidadeId: user.login,
-      detalhe: `Usuário "${user.nomeCompleto}" (${user.login}) alterou sua senha com derivação PBKDF2/SHA-256.`, ip: this.getAuditIp(),
-    });
-
+    // Reflete a troca na SESSÃO local (dado de sessão, não cadastro de negócio).
     const currentLogged = this.getCurrentUser();
-    if (currentLogged && (currentLogged.email === user.email || currentLogged.login === user.login)) {
+    if (currentLogged && (currentLogged.id === userId || currentLogged.email === userId || currentLogged.login === userId)) {
       currentLogged.forcePasswordChange = false;
       localStorage.setItem(SESSION_KEYS.USER, JSON.stringify(currentLogged));
     }
+
     return { success: true };
   }
 
   // Delete User Account
-  deleteUser(userId: string, performer: UserProfile): { success: boolean; message?: string } {
+  async deleteUser(userId: string, performer: UserProfile): Promise<{ success: boolean; message?: string }> {
     if (performer.role !== 'ADMIN') {
       throw new Error('Apenas o Administrador Geral pode excluir usuários.');
     }
@@ -634,10 +743,13 @@ export class StorageService {
       }
     }
 
-    const filtered = users.filter(u => u.id !== userId);
-    this.saveUsers(filtered);
+    // Central-first: exclui no Neon via DELETE /api/auth/users/:id. Em falha,
+    // a exceção impede a remoção da memória.
+    await apiDeleteUser(userId);
 
-    this.addAuditLogInternal({
+    this.setUsers(this.getUsers().filter(u => u.id !== userId));
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: performer.name,
@@ -645,11 +757,24 @@ export class StorageService {
       acao: 'Exclusão de Usuário',
       entidade: 'Usuário',
       entidadeId: target.login,
-      detalhe: `Conta de usuário "${target.nomeCompleto}" (${target.login}) removida do sistema pelo Administrador.`,
+      detalhe: `Conta de usuário "${target.nomeCompleto}" (${target.login}) removida do banco central pelo Administrador.`,
       ip: this.getAuditIp(),
     });
 
     return { success: true };
+  }
+
+  // --- NÚCLEO DE AUTENTICAÇÃO CENTRAL (JWT) ---
+  // A API central (Neon) é a única fonte de verdade da autenticação. O token
+  // JWT e o perfil autenticado são dados de sessão (sessionStorage/localStorage
+  // de sessão) — não são cadastro de negócio.
+
+  getAuthToken(): string | null {
+    return getCentralToken();
+  }
+
+  clearAuthToken(): void {
+    clearCentralToken();
   }
 
   // --- USER PROFILE & AUTHENTICATION ---
@@ -679,134 +804,49 @@ export class StorageService {
     loginOrEmailOrCpf: string,
     passwordInput: string
   ): Promise<{ success: boolean; user?: UserProfile; userAccount?: UserAccount; message?: string; forcePasswordChange?: boolean }> {
-    const cleanInput = loginOrEmailOrCpf.trim().toLowerCase();
-    const cleanCpfDigits = cleanInput.replace(/\D/g, '');
+    // Central-only: o login valida APENAS contra os usuários no Neon
+    // (POST /api/auth/login). Não existe fallback para usuários do
+    // localStorage/IndexedDB — se a API falhar, o login falha.
+    try {
+      const central = await apiLogin(loginOrEmailOrCpf, passwordInput);
+      setAuthToken(central.token);
+      const profile = buildProfileFromUser(central.user);
 
-    const users = this.getUsers();
-    
-    // Find matching account by login, email, or CPF
-    const account = users.find(
-      u => u.login.toLowerCase() === cleanInput ||
-           u.email.toLowerCase() === cleanInput ||
-           (cleanCpfDigits.length > 5 && u.cpf.replace(/\D/g, '') === cleanCpfDigits)
-    );
+      // Sessão (não cadastro): token e perfil autenticado ficam na sessão.
+      localStorage.setItem(SESSION_KEYS.AUTHENTICATED, 'true');
+      localStorage.setItem(SESSION_KEYS.USER, JSON.stringify(profile));
+      localStorage.setItem(SESSION_KEYS.ROLE, profile.role);
 
-    if (!account) {
-      this.addAuditLogInternal({
+      await this.auditBestEffort({
         id: 'log-' + Date.now(),
         dataHora: new Date().toISOString(),
-        usuarioNome: cleanInput,
-        usuarioPerfil: 'VISITANTE',
-        acao: 'Tentativa de Acesso Inválida',
+        usuarioNome: profile.name,
+        usuarioPerfil: profile.role,
+        acao: 'Login no Sistema (Central)',
         entidade: 'Sistema',
-        entidadeId: cleanInput,
-        detalhe: `Tentativa de login frustrada para usuário não existente "${cleanInput}".`,
-        ip: this.getAuditIp(),
-      });
-      return { success: false, message: 'Usuário não encontrado. Entre em contato com o Administrador Geral do SISPAT para cadastramento de conta.' };
-    }
-
-    if (account.situacao === 'Inativo') {
-      return { success: false, message: 'Conta inativa. Entre em contato com o Administrador Geral para ativá-la.' };
-    }
-
-    if (account.situacao === 'Bloqueado') {
-      return { success: false, message: 'Conta bloqueada por motivos de segurança. Contate o Administrador Geral para desbloqueio.' };
-    }
-
-    const passwordCheck = await verifyPassword(passwordInput, account.passwordHash);
-    if (!passwordCheck.valid) {
-      account.tentativasInvalidas = (account.tentativasInvalidas || 0) + 1;
-      
-      if (account.tentativasInvalidas >= 5) {
-        account.situacao = 'Bloqueado';
-        this.saveUsers(users);
-        this.addAuditLogInternal({
-          id: 'log-' + Date.now(),
-          dataHora: new Date().toISOString(),
-          usuarioNome: account.nomeCompleto,
-          usuarioPerfil: account.role,
-          acao: 'Bloqueio por Tentativas Incorretas',
-          entidade: 'Usuário',
-          entidadeId: account.login,
-          detalhe: `Conta de "${account.nomeCompleto}" bloqueada automaticamente após 5 tentativas consecutivas com senha inválida.`,
-          ip: this.getAuditIp(),
-        });
-        return { success: false, message: 'Conta bloqueada por exceder 5 tentativas com senha inválida. Solicite desbloqueio ao Administrador Geral.' };
-      }
-
-      this.saveUsers(users);
-
-      this.addAuditLogInternal({
-        id: 'log-' + Date.now(),
-        dataHora: new Date().toISOString(),
-        usuarioNome: account.nomeCompleto,
-        usuarioPerfil: account.role,
-        acao: 'Tentativa de Acesso Inválida',
-        entidade: 'Usuário',
-        entidadeId: account.login,
-        detalhe: `Senha incorreta informada para "${account.login}". Tentativas: ${account.tentativasInvalidas}/5.`,
+        entidadeId: profile.login || profile.email,
+        detalhe: `Autenticação central bem-sucedida para "${profile.name}" (${profile.role}).`,
         ip: this.getAuditIp(),
       });
 
-      return { success: false, message: `Senha incorreta. (${account.tentativasInvalidas}/5 tentativas).` };
+      this.notifyListeners();
+      return {
+        success: true,
+        user: profile,
+        forcePasswordChange: central.forcePasswordChange,
+      };
+    } catch (centralError) {
+      // Qualquer falha (offline, rede, 401, 403, 400, 503) é retornada ao usuário.
+      return { success: false, message: userFacingApiError(centralError) };
     }
-
-    // Migração transparente de contas legadas que ainda estavam em texto simples.
-    if (passwordCheck.needsMigration) {
-      account.passwordHash = await hashPassword(passwordInput);
-      account.forcePasswordChange = true;
-    }
-
-    // Reset failed attempts on success
-    account.tentativasInvalidas = 0;
-    account.ultimoAcesso = new Date().toISOString();
-    this.saveUsers(users);
-
-    const userProfile: UserProfile = {
-      id: account.id,
-      role: account.role,
-      name: account.nomeCompleto,
-      email: account.email,
-      cpf: account.cpf,
-      matricula: account.matricula,
-      setor: account.setor,
-      cargo: account.cargo,
-      telefone: account.telefone,
-      login: account.login,
-      situacao: account.situacao,
-      forcePasswordChange: account.forcePasswordChange,
-    };
-
-    localStorage.setItem(SESSION_KEYS.AUTHENTICATED, 'true');
-    localStorage.setItem(SESSION_KEYS.USER, JSON.stringify(userProfile));
-    localStorage.setItem(SESSION_KEYS.ROLE, account.role);
-
-    this.addAuditLogInternal({
-      id: 'log-' + Date.now(),
-      dataHora: new Date().toISOString(),
-      usuarioNome: userProfile.name,
-      usuarioPerfil: userProfile.role,
-      acao: 'Login no Sistema',
-      entidade: 'Sistema',
-      entidadeId: userProfile.login || userProfile.email,
-      detalhe: `Autenticação bem-sucedida para o usuário "${userProfile.name}" (${userProfile.role}).`,
-      ip: this.getAuditIp(),
-    });
-
-    this.notifyListeners();
-    return { 
-      success: true, 
-      user: userProfile, 
-      userAccount: account,
-      forcePasswordChange: account.forcePasswordChange 
-    };
   }
 
-  logout() {
+  async logout() {
     const user = this.getCurrentUser();
     if (user) {
-      this.addAuditLogInternal({
+      // Best-effort: o logout não pode ficar pendurado se o banco central
+      // estiver inalcançável; nada é gravado localmente.
+      await this.auditBestEffort({
         id: 'log-' + Date.now(),
         dataHora: new Date().toISOString(),
         usuarioNome: user.name,
@@ -821,6 +861,17 @@ export class StorageService {
 
     localStorage.removeItem(SESSION_KEYS.AUTHENTICATED);
     localStorage.removeItem(SESSION_KEYS.USER);
+    clearCentralToken();
+    // Encerra a sessão: dados centrais saem da memória também.
+    this.patrimoniosMemory = [];
+    this.emprestimosMemory = [];
+    this.manutencoesMemory = [];
+    this.movimentacoesMemory = [];
+    this.auditLogsMemory = [];
+    this.inventariosMemory = [];
+    this.sectorsMemory = null;
+    this.usersMemory = null;
+    this.centralStatus = 'unknown';
     this.notifyListeners();
   }
 
@@ -842,7 +893,7 @@ export class StorageService {
     novoRespCpf: string,
     motivo: string,
     usuario: UserProfile
-  ): Patrimonio {
+  ): Promise<Patrimonio> {
     this.assertRole(usuario, ['ADMIN', 'GESTOR', 'OPERADOR', 'TECNICO'], 'transferir patrimônio');
     const updated: Patrimonio = {
       ...asset,
@@ -857,29 +908,41 @@ export class StorageService {
     return this.savePatrimonio(updated, usuario);
   }
 
-  deletePatrimonio(id: string, usuario: UserProfile): boolean {
+  async deletePatrimonio(id: string, usuario: UserProfile): Promise<boolean> {
     this.assertRole(usuario, ['ADMIN'], 'excluir patrimônio definitivamente');
     const items = this.getPatrimonios();
     const item = items.find(p => p.id === id);
     if (!item) return false;
 
-    this.setPatrimonios(items.filter(p => p.id !== id));
-    localStorage.setItem(STORAGE_KEYS.MOVIMENTACOES, JSON.stringify(this.getMovimentacoes().filter(m => m.patrimonioId !== id)));
-    localStorage.setItem(STORAGE_KEYS.MANUTENCOES, JSON.stringify(this.getManutencoes().filter(m => m.patrimonioId !== id)));
-    localStorage.setItem(STORAGE_KEYS.EMPRESTIMOS, JSON.stringify(this.getEmprestimos().filter(e => e.patrimonioId !== id)));
-
-    const sessao = this.getInventarioSessao();
-    if (sessao.id !== 'inv-vazio') {
-      const cleaned = {
-        ...sessao,
-        encontradosIds: sessao.encontradosIds.filter(x => x !== id),
-        pendentesIds: sessao.pendentesIds.filter(x => x !== id),
-        divergencias: (sessao.divergencias || []).filter(d => d.patrimonioId !== id),
-      };
-      localStorage.setItem(STORAGE_KEYS.INVENTARIO, JSON.stringify(cleaned));
+    // Exclui também os empréstimos, manutenções e movimentações centrais
+    // vinculados ao bem, mantendo a consistência entre as estações
+    // (A → Neon → B). Nada é gravado em localStorage.
+    const loansCentral = this.emprestimosMemory.filter(e => e.patrimonioId === id);
+    for (const loan of loansCentral) {
+      await apiDeleteEmprestimo(loan.id);
     }
+    const maintCentral = this.manutencoesMemory.filter(m => m.patrimonioId === id);
+    for (const m of maintCentral) {
+      await apiDeleteManutencao(m.id);
+    }
+    await apiDeleteMovimentacoesByPatrimonio(id);
 
-    this.addAuditLogInternal({
+    await apiDeletePatrimonio(id);
+
+    this.setPatrimonios(items.filter(p => p.id !== id));
+    this.emprestimosMemory = this.emprestimosMemory.filter(e => e.patrimonioId !== id);
+    this.manutencoesMemory = this.manutencoesMemory.filter(m => m.patrimonioId !== id);
+    this.movimentacoesMemory = this.movimentacoesMemory.filter(m => m.patrimonioId !== id);
+
+    // Remove o bem das sessões de inventário em memória (espelho do Neon).
+    this.inventariosMemory = this.inventariosMemory.map(s => ({
+      ...s,
+      encontradosIds: (s.encontradosIds || []).filter(x => x !== id),
+      pendentesIds: (s.pendentesIds || []).filter(x => x !== id),
+      divergencias: (s.divergencias || []).filter(d => d.patrimonioId !== id),
+    }));
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: new Date().toISOString(),
       usuarioNome: usuario.name,
@@ -894,58 +957,70 @@ export class StorageService {
     return true;
   }
 
-  // --- MOVIMENTAÇÕES ---
+  // --- MOVIMENTAÇÕES (fonte central única: PostgreSQL/Neon) ---
   getMovimentacoes(): Movimentacao[] {
-    const data = localStorage.getItem(STORAGE_KEYS.MOVIMENTACOES);
-    if (!data) return [];
-    try { const parsed = JSON.parse(data); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+    return JSON.parse(JSON.stringify(this.movimentacoesMemory)) as Movimentacao[];
   }
 
-  private addMovimentacaoInternal(mov: Movimentacao) {
-    const list = this.getMovimentacoes();
-    list.unshift(mov);
-    localStorage.setItem(STORAGE_KEYS.MOVIMENTACOES, JSON.stringify(list));
+  // Persiste a movimentação no banco central. A memória só reflete o evento
+  // após a confirmação do Neon.
+  private async addMovimentacaoInternal(mov: Movimentacao): Promise<void> {
+    await apiSaveMovimentacao(mov);
+    this.movimentacoesMemory = [mov, ...this.movimentacoesMemory.filter(m => m.id !== mov.id)];
   }
 
-  // --- MANUTENÇÕES ---
+  // --- MANUTENÇÕES (fonte central única: PostgreSQL/Neon) ---
   getManutencoes(): Manutencao[] {
-    const data = localStorage.getItem(STORAGE_KEYS.MANUTENCOES);
-    if (!data) return [];
-    try { const parsed = JSON.parse(data); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+    return JSON.parse(JSON.stringify(this.manutencoesMemory)) as Manutencao[];
   }
 
-  saveManutencao(manutencao: Manutencao, usuario: UserProfile): Manutencao {
+  // Propaga a situação central de um patrimônio (EMPRÉSTIMO/MANUTENÇÃO), sem
+  // passar pela checagem de perfil de savePatrimonio: a autorização já foi
+  // validada na operação que originou a mudança.
+  private async persistPatrimonioSituacao(
+    patrimonioId: string,
+    codigoPatrimonial: string,
+    situacao: SituacaoPatrimonio,
+  ): Promise<void> {
+    const items = this.getPatrimonios();
+    const idx = items.findIndex(p => p.id === patrimonioId || p.codigoPatrimonial === codigoPatrimonial);
+    if (idx < 0) return;
+    const pat = { ...items[idx], situacao, ultimaAtualizacao: new Date().toISOString() };
+    // Persiste no banco central primeiro; a memória só reflete após sucesso.
+    await apiSavePatrimonio(pat);
+    items[idx] = pat;
+    this.setPatrimonios(items);
+  }
+
+  async saveManutencao(manutencao: Manutencao, usuario: UserProfile): Promise<Manutencao> {
     this.assertRole(usuario, ['ADMIN', 'GESTOR', 'OPERADOR', 'TECNICO'], 'gerenciar manutenções');
-    const list = this.getManutencoes();
+    const list = this.manutencoesMemory;
     const index = list.findIndex(m => m.id === manutencao.id);
     const now = new Date().toISOString();
+
+    // Persiste primeiro no banco central; só atualiza a memória após sucesso.
+    await apiSaveManutencao(manutencao);
 
     if (index >= 0) {
       list[index] = manutencao;
     } else {
       list.unshift(manutencao);
     }
+    this.manutencoesMemory = list;
 
-    localStorage.setItem(STORAGE_KEYS.MANUTENCOES, JSON.stringify(list));
-
-    // Update Patrimonio status
-    const patrimonios = this.getPatrimonios();
-    const pat = patrimonios.find(p => p.id === manutencao.patrimonioId || p.codigoPatrimonial === manutencao.codigoPatrimonial);
-    if (pat) {
-      if (manutencao.status === 'Aberta' || manutencao.status === 'Em_Andamento' || manutencao.status === 'Aguardando_Peças') {
-        pat.situacao = 'Em manutenção';
-      } else if (manutencao.status === 'Concluída') {
-        pat.situacao = 'Disponível';
-      }
-      this.setPatrimonios(patrimonios);
+    // Update Patrimonio status (persistido no Neon).
+    if (manutencao.status === 'Aberta' || manutencao.status === 'Em_Andamento' || manutencao.status === 'Aguardando_Peças') {
+      await this.persistPatrimonioSituacao(manutencao.patrimonioId, manutencao.codigoPatrimonial, 'Em manutenção');
+    } else if (manutencao.status === 'Concluída') {
+      await this.persistPatrimonioSituacao(manutencao.patrimonioId, manutencao.codigoPatrimonial, 'Disponível');
     }
 
-    this.addAuditLogInternal({
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: now,
       usuarioNome: usuario.name,
       usuarioPerfil: usuario.role,
-      acao: index >= 0 ? 'Atualização de Manutenção' : 'Abertura de Manutenção',
+      acao: index >= 0 ? 'Atualização de Manutenção (Central)' : 'Abertura de Manutenção (Central)',
       entidade: 'Manutenção',
       entidadeId: manutencao.codigoPatrimonial,
       detalhe: `OS de manutenção ${manutencao.status} para ${manutencao.patrimonioNome}. Defeito: ${manutencao.defeito}`,
@@ -956,84 +1031,75 @@ export class StorageService {
     return manutencao;
   }
 
-  deleteManutencao(id: string, usuario: UserProfile): boolean {
+  async deleteManutencao(id: string, usuario: UserProfile): Promise<boolean> {
     this.assertRole(usuario, ['ADMIN'], 'excluir manutenção');
-    const list = this.getManutencoes();
-    const target = list.find(m => m.id === id);
+    const target = this.manutencoesMemory.find(m => m.id === id);
     if (!target) return false;
-    localStorage.setItem(STORAGE_KEYS.MANUTENCOES, JSON.stringify(list.filter(m => m.id !== id)));
-    const patrimonios = this.getPatrimonios();
-    const pat = patrimonios.find(p => p.id === target.patrimonioId);
-    if (pat && !this.getManutencoes().some(m => m.patrimonioId === pat.id && m.status !== 'Concluída' && m.status !== 'Cancelada')) {
-      pat.situacao = 'Disponível';
-      this.setPatrimonios(patrimonios);
+
+    await apiDeleteManutencao(id);
+    this.manutencoesMemory = this.manutencoesMemory.filter(m => m.id !== id);
+
+    const pat = this.getPatrimonios().find(p => p.id === target.patrimonioId);
+    if (pat && !this.manutencoesMemory.some(m => m.patrimonioId === pat.id && m.status !== 'Concluída' && m.status !== 'Cancelada')) {
+      await this.persistPatrimonioSituacao(pat.id, pat.codigoPatrimonial, 'Disponível');
     }
-    this.addAuditLogInternal({
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(), dataHora: new Date().toISOString(), usuarioNome: usuario.name, usuarioPerfil: usuario.role,
-      acao: 'Exclusão de Manutenção', entidade: 'Manutenção', entidadeId: target.codigoPatrimonial,
+      acao: 'Exclusão de Manutenção (Central)', entidade: 'Manutenção', entidadeId: target.codigoPatrimonial,
       detalhe: `Ordem de serviço ${target.id} excluída definitivamente.`, ip: this.getAuditIp(),
     });
     this.notifyListeners();
     return true;
   }
 
-  // --- EMPRÉSTIMOS ---
+  // --- EMPRÉSTIMOS (fonte central única: PostgreSQL/Neon) ---
   getEmprestimos(): Emprestimo[] {
-    const data = localStorage.getItem(STORAGE_KEYS.EMPRESTIMOS);
-    let list: Emprestimo[] = [];
-    if (data) {
-      try { const parsed = JSON.parse(data); list = Array.isArray(parsed) ? parsed : []; } catch { list = []; }
-    }
-
+    // Derivação somente leitura: "Ativo" vencido passa a ser exibido como
+    // "Atrasado" (baseada na data), sem gravar nada em memória/central.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    let changed = false;
-    list = list.map(e => {
+    const derived = this.emprestimosMemory.map(e => {
       if (e.status === 'Ativo' && e.previsaoDevolucao) {
         const due = new Date(`${e.previsaoDevolucao}T00:00:00`);
         if (!Number.isNaN(due.getTime()) && due < today) {
-          changed = true;
           return { ...e, status: 'Atrasado' as const };
         }
       }
       return e;
     });
-    if (changed) localStorage.setItem(STORAGE_KEYS.EMPRESTIMOS, JSON.stringify(list));
-    return list;
+    return JSON.parse(JSON.stringify(derived)) as Emprestimo[];
   }
 
-  saveEmprestimo(emprestimo: Emprestimo, usuario: UserProfile): Emprestimo {
+  async saveEmprestimo(emprestimo: Emprestimo, usuario: UserProfile): Promise<Emprestimo> {
     this.assertRole(usuario, ['ADMIN', 'GESTOR', 'OPERADOR', 'SERVIDOR', 'PROFESSOR'], 'gerenciar empréstimos');
-    const list = this.getEmprestimos();
+    const list = this.emprestimosMemory;
     const index = list.findIndex(e => e.id === emprestimo.id);
     const now = new Date().toISOString();
+
+    // Persiste primeiro no banco central; só atualiza a memória após sucesso.
+    await apiSaveEmprestimo(emprestimo);
 
     if (index >= 0) {
       list[index] = emprestimo;
     } else {
       list.unshift(emprestimo);
     }
+    this.emprestimosMemory = list;
 
-    localStorage.setItem(STORAGE_KEYS.EMPRESTIMOS, JSON.stringify(list));
-
-    // Update Patrimonio status
-    const patrimonios = this.getPatrimonios();
-    const pat = patrimonios.find(p => p.id === emprestimo.patrimonioId || p.codigoPatrimonial === emprestimo.codigoPatrimonial);
-    if (pat) {
-      if (emprestimo.status === 'Ativo' || emprestimo.status === 'Atrasado') {
-        pat.situacao = 'Emprestado';
-      } else if (emprestimo.status === 'Devolvido') {
-        pat.situacao = 'Disponível';
-      }
-      this.setPatrimonios(patrimonios);
+    // Update Patrimonio status (persistido no Neon).
+    if (emprestimo.status === 'Ativo' || emprestimo.status === 'Atrasado') {
+      await this.persistPatrimonioSituacao(emprestimo.patrimonioId, emprestimo.codigoPatrimonial, 'Emprestado');
+    } else if (emprestimo.status === 'Devolvido') {
+      await this.persistPatrimonioSituacao(emprestimo.patrimonioId, emprestimo.codigoPatrimonial, 'Disponível');
     }
 
-    this.addAuditLogInternal({
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(),
       dataHora: now,
       usuarioNome: usuario.name,
       usuarioPerfil: usuario.role,
-      acao: index >= 0 ? 'Atualização de Empréstimo' : 'Novo Empréstimo',
+      acao: index >= 0 ? 'Atualização de Empréstimo (Central)' : 'Novo Empréstimo (Central)',
       entidade: 'Empréstimo',
       entidadeId: emprestimo.codigoPatrimonial,
       detalhe: `Empréstimo ${emprestimo.status} para ${emprestimo.servidorNome} (${emprestimo.setor})`,
@@ -1044,64 +1110,86 @@ export class StorageService {
     return emprestimo;
   }
 
-  deleteEmprestimo(id: string, usuario: UserProfile): boolean {
+  async deleteEmprestimo(id: string, usuario: UserProfile): Promise<boolean> {
     this.assertRole(usuario, ['ADMIN'], 'excluir empréstimo');
-    const list = this.getEmprestimos();
-    const target = list.find(e => e.id === id);
+    const target = this.emprestimosMemory.find(e => e.id === id);
     if (!target) return false;
-    localStorage.setItem(STORAGE_KEYS.EMPRESTIMOS, JSON.stringify(list.filter(e => e.id !== id)));
-    const patrimonios = this.getPatrimonios();
-    const pat = patrimonios.find(p => p.id === target.patrimonioId);
-    if (pat && !this.getEmprestimos().some(e => e.patrimonioId === pat.id && (e.status === 'Ativo' || e.status === 'Atrasado'))) {
-      pat.situacao = 'Disponível';
-      this.setPatrimonios(patrimonios);
+
+    await apiDeleteEmprestimo(id);
+    this.emprestimosMemory = this.emprestimosMemory.filter(e => e.id !== id);
+
+    const pat = this.getPatrimonios().find(p => p.id === target.patrimonioId);
+    if (pat && !this.emprestimosMemory.some(e => e.patrimonioId === pat.id && (e.status === 'Ativo' || e.status === 'Atrasado'))) {
+      await this.persistPatrimonioSituacao(pat.id, pat.codigoPatrimonial, 'Disponível');
     }
-    this.addAuditLogInternal({
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(), dataHora: new Date().toISOString(), usuarioNome: usuario.name, usuarioPerfil: usuario.role,
-      acao: 'Exclusão de Empréstimo', entidade: 'Empréstimo', entidadeId: target.codigoPatrimonial,
+      acao: 'Exclusão de Empréstimo (Central)', entidade: 'Empréstimo', entidadeId: target.codigoPatrimonial,
       detalhe: `Empréstimo ${target.id} excluído definitivamente.`, ip: this.getAuditIp(),
     });
     this.notifyListeners();
     return true;
   }
 
-  // --- AUDIT LOGS ---
+  // --- AUDIT LOGS (fonte central única: PostgreSQL/Neon) ---
   getAuditLogs(): AuditLog[] {
-    const data = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
-    if (!data) return [];
-    try { const parsed = JSON.parse(data); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+    return JSON.parse(JSON.stringify(this.auditLogsMemory)) as AuditLog[];
   }
 
-  private addAuditLogInternal(log: AuditLog) {
-    const logs = this.getAuditLogs();
-    logs.unshift(log);
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
+  // Grava o log no banco central. Somente retorna após a confirmação do Neon;
+  // em falha, a exceção impede que a operação seja declarada concluída.
+  private async addAuditLogInternal(log: AuditLog): Promise<void> {
+    await apiSaveAuditLog(log);
+    this.auditLogsMemory = [log, ...this.auditLogsMemory.filter(l => l.id !== log.id)];
   }
 
-  // --- INVENTÁRIO ---
+  // Variação tolerante usada SOMENTE nos fluxos que já operam em fallback
+  // offline (login local, troca de senha local, gestão de usuários local e
+  // logout): com o banco central inalcançável o evento simplesmente não pode
+  // ser registrado, e não deve derrubar a operação. Nada é gravado localmente.
+  private async auditBestEffort(log: AuditLog): Promise<void> {
+    try {
+      await this.addAuditLogInternal(log);
+    } catch {
+      // Banco central indisponível neste fluxo offline — registro não persistido.
+    }
+  }
+
+  // --- INVENTÁRIO (fonte central única: PostgreSQL/Neon) ---
+  // Sessões e histórico vivem no banco central; a memória reflete o Neon.
+  private emptyInventarioSessao(): InventarioSessao {
+    return { ...INITIAL_INVENTARIO_SESSAO, encontradosIds: [], pendentesIds: [], divergencias: [] };
+  }
+
+  // Sessão "atual": a que está em andamento/pausada (ou a mais recente na
+  // memória). Retorna uma cópia vazia quando não há sessões carregadas.
   getInventarioSessao(): InventarioSessao {
-    const data = localStorage.getItem(STORAGE_KEYS.INVENTARIO);
-    if (!data) return { ...INITIAL_INVENTARIO_SESSAO, encontradosIds: [], pendentesIds: [], divergencias: [] };
-    try { return JSON.parse(data); } catch { return { ...INITIAL_INVENTARIO_SESSAO, encontradosIds: [], pendentesIds: [], divergencias: [] }; }
+    if (this.inventariosMemory.length === 0) return this.emptyInventarioSessao();
+    const ativa = this.inventariosMemory.find(s => s.status === 'Em_Andamento' || s.status === 'Pausado');
+    const sessao = ativa || this.inventariosMemory[0];
+    return JSON.parse(JSON.stringify(sessao)) as InventarioSessao;
   }
 
   getInventarioHistorico(): InventarioSessao[] {
-    const data = localStorage.getItem(STORAGE_KEYS.INVENTARIO_HISTORY);
-    if (!data) return [];
-    try { const parsed = JSON.parse(data); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+    return JSON.parse(JSON.stringify(this.inventariosMemory)) as InventarioSessao[];
   }
 
-  saveInventarioSessao(sessao: InventarioSessao, usuario?: UserProfile) {
+  async saveInventarioSessao(sessao: InventarioSessao, usuario?: UserProfile) {
     const usr = usuario || this.getCurrentUser();
     this.assertRole(usr, ['ADMIN', 'GESTOR', 'AUDITOR', 'OPERADOR', 'TECNICO'], 'executar inventário');
-    localStorage.setItem(STORAGE_KEYS.INVENTARIO, JSON.stringify(sessao));
 
-    const history = this.getInventarioHistorico();
-    const index = history.findIndex(h => h.id === sessao.id);
-    if (index >= 0) history[index] = sessao; else history.unshift(sessao);
-    localStorage.setItem(STORAGE_KEYS.INVENTARIO_HISTORY, JSON.stringify(history.slice(0, 200)));
+    // Persiste primeiro no banco central; a memória só reflete após sucesso.
+    await apiSaveInventario(sessao);
 
-    this.addAuditLogInternal({
+    const index = this.inventariosMemory.findIndex(h => h.id === sessao.id);
+    if (index >= 0) {
+      this.inventariosMemory[index] = sessao;
+    } else {
+      this.inventariosMemory.unshift(sessao);
+    }
+
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(), dataHora: new Date().toISOString(), usuarioNome: usr.name, usuarioPerfil: usr.role,
       acao: 'Sessão de Inventário', entidade: 'Inventário', entidadeId: sessao.id,
       detalhe: `Sessão "${sessao.titulo}" atualizada. Progresso: ${sessao.totalEncontrados}/${sessao.totalEsperado}. Status: ${sessao.status}.`,
@@ -1110,19 +1198,16 @@ export class StorageService {
     this.notifyListeners();
   }
 
-  deleteInventarioSessao(id: string, usuario: UserProfile) {
+  async deleteInventarioSessao(id: string, usuario: UserProfile): Promise<boolean> {
     this.assertRole(usuario, ['ADMIN'], 'excluir sessão de inventário');
-    const history = this.getInventarioHistorico();
-    const target = history.find(h => h.id === id);
+    const target = this.inventariosMemory.find(h => h.id === id);
     if (!target) return false;
 
-    localStorage.setItem(STORAGE_KEYS.INVENTARIO_HISTORY, JSON.stringify(history.filter(h => h.id !== id)));
-    const current = this.getInventarioSessao();
-    if (current.id === id) {
-      localStorage.removeItem(STORAGE_KEYS.INVENTARIO);
-    }
+    // Exclui primeiro no banco central; a memória só reflete após sucesso.
+    await apiDeleteInventario(id);
+    this.inventariosMemory = this.inventariosMemory.filter(h => h.id !== id);
 
-    this.addAuditLogInternal({
+    await this.addAuditLogInternal({
       id: 'log-' + Date.now(), dataHora: new Date().toISOString(), usuarioNome: usuario.name, usuarioPerfil: usuario.role,
       acao: 'Exclusão de Inventário', entidade: 'Inventário', entidadeId: id,
       detalhe: `Sessão de inventário "${target.titulo || id}" excluída definitivamente.`, ip: this.getAuditIp(),
@@ -1379,48 +1464,190 @@ export class StorageService {
   }
 
   // --- ZERAR TODO O SISTEMA ---
-  clearAllData(usuario: UserProfile) {
+  async clearAllData(usuario: UserProfile): Promise<{ centralDeleted: number; centralError?: string }> {
     this.assertRole(usuario, ['ADMIN'], 'zerar o sistema');
 
-    const currentAdmin = this.getUsers().find(u =>
+    // Usuários: fonte única central. Recarrega do Neon para preservar apenas o
+    // administrador ativo e excluir as demais contas. Nada é semeado no
+    // navegador — o admin inicial é criado pela migration do banco (Neon).
+    if (this.usersMemory === null) {
+      try {
+        await this.refreshUsersFromApi();
+      } catch {
+        // Sem Neon, os usuários não são tocados no zeramento.
+      }
+    }
+    const centralUsers = this.getUsers();
+    // Preserva o Administrador Geral central (conta autenticada ou a conta
+    // "admin"). Se ele não estiver na lista central, os usuários não são
+    // tocados no zeramento — nenhuma conta local é sintetizada.
+    const currentAdmin = centralUsers.find(u =>
       u.role === 'ADMIN' && (u.id === usuario.id || u.login === 'admin')
     );
-    const adminToKeep: UserAccount = currentAdmin
+    const adminToKeep: UserAccount | null = currentAdmin
       ? { ...currentAdmin, login: 'admin', nomeCompleto: currentAdmin.nomeCompleto || 'Administrador', situacao: 'Ativo' }
-      : { ...INITIAL_USERS[0] };
+      : null;
 
-    localStorage.setItem(STORAGE_KEYS.PATRIMONIOS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.MOVIMENTACOES, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.MANUTENCOES, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.EMPRESTIMOS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.INVENTARIO, JSON.stringify({ ...INITIAL_INVENTARIO_SESSAO, encontradosIds: [], pendentesIds: [], divergencias: [] }));
-    localStorage.setItem(STORAGE_KEYS.INVENTARIO_HISTORY, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.SECTORS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify([adminToKeep]));
+    // Etapa 3/4: patrimônios, empréstimos e manutenções residem no banco
+    // central (Neon). Zerar exige excluí-los lá.
+    let centralDeleted = 0;
+    let centralError: string | undefined;
 
-    const profile: UserProfile = {
-      id: adminToKeep.id,
-      role: 'ADMIN',
-      name: adminToKeep.nomeCompleto,
-      email: adminToKeep.email,
-      cpf: adminToKeep.cpf,
-      matricula: adminToKeep.matricula,
-      setor: adminToKeep.setor,
-      cargo: adminToKeep.cargo,
-      telefone: adminToKeep.telefone,
-      login: 'admin',
-      situacao: 'Ativo',
-      forcePasswordChange: adminToKeep.forcePasswordChange,
-    };
-    localStorage.setItem(SESSION_KEYS.AUTHENTICATED, 'true');
-    localStorage.setItem(SESSION_KEYS.USER, JSON.stringify(profile));
-    localStorage.setItem(SESSION_KEYS.ROLE, 'ADMIN');
+    const items = this.getPatrimonios();
+    if (items.length > 0) {
+      for (const p of items) {
+        try {
+          await apiDeletePatrimonio(p.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.setPatrimonios([]);
+    } else {
+      this.setPatrimonios([]);
+    }
+
+    if (!centralError) {
+      for (const e of this.emprestimosMemory) {
+        try {
+          await apiDeleteEmprestimo(e.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.emprestimosMemory = [];
+    }
+
+    if (!centralError) {
+      for (const m of this.manutencoesMemory) {
+        try {
+          await apiDeleteManutencao(m.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.manutencoesMemory = [];
+    }
+
+    if (!centralError) {
+      for (const s of this.getSectors()) {
+        try {
+          await apiDeleteSector(s.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.sectorsMemory = [];
+    }
+
+    // Movimentações, inventários e trilha de auditoria também residem no banco
+    // central — zerar exige excluí-los lá. Nada é gravado em localStorage para
+    // esses dados.
+    if (!centralError) {
+      for (const m of this.movimentacoesMemory) {
+        try {
+          await apiDeleteMovimentacao(m.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.movimentacoesMemory = [];
+    }
+
+    if (!centralError) {
+      for (const inv of this.inventariosMemory) {
+        try {
+          await apiDeleteInventario(inv.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.inventariosMemory = [];
+    }
+
+    if (!centralError) {
+      for (const log of this.auditLogsMemory) {
+        try {
+          await apiDeleteAuditLog(log.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) this.auditLogsMemory = [];
+    }
+
+    try {
+      localStorage.removeItem(STORAGE_KEYS.MANUTENCOES);
+      localStorage.removeItem(STORAGE_KEYS.EMPRESTIMOS);
+      localStorage.removeItem(LEGACY_SECTORS_KEY);
+    } catch {
+      // Limpeza de chaves legadas é best-effort.
+    }
+
+    // Usuários: exclui no Neon todas as contas, preservando o administrador
+    // central. Se o administrador não estiver na lista central, os usuários
+    // não são tocados. Nada é gravado em localStorage/IndexedDB.
+    if (!centralError && adminToKeep) {
+      for (const u of this.getUsers()) {
+        if (u.id === adminToKeep.id) continue;
+        try {
+          await apiDeleteUser(u.id);
+          centralDeleted += 1;
+        } catch (err) {
+          centralError = userFacingApiError(err);
+          break;
+        }
+      }
+      if (!centralError) {
+        this.usersMemory = [adminToKeep];
+        try {
+          localStorage.removeItem(LEGACY_USERS_KEY);
+        } catch {
+          // Limpeza da chave legada é best-effort.
+        }
+      }
+    }
+
+    if (adminToKeep) {
+      const profile: UserProfile = {
+        id: adminToKeep.id,
+        role: 'ADMIN',
+        name: adminToKeep.nomeCompleto,
+        email: adminToKeep.email,
+        cpf: adminToKeep.cpf,
+        matricula: adminToKeep.matricula,
+        setor: adminToKeep.setor,
+        cargo: adminToKeep.cargo,
+        telefone: adminToKeep.telefone,
+        login: 'admin',
+        situacao: 'Ativo',
+        forcePasswordChange: adminToKeep.forcePasswordChange,
+      };
+      localStorage.setItem(SESSION_KEYS.AUTHENTICATED, 'true');
+      localStorage.setItem(SESSION_KEYS.USER, JSON.stringify(profile));
+      localStorage.setItem(SESSION_KEYS.ROLE, 'ADMIN');
+    }
     this.notifyListeners();
+
+    return { centralDeleted, centralError };
   }
 
-  resetToInitialData(usuario: UserProfile) {
-    this.clearAllData(usuario);
+  async resetToInitialData(usuario: UserProfile) {
+    return this.clearAllData(usuario);
   }
 }
 
