@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from '../../../db/requireAuth.js';
+import { authorize } from '../../../db/authorize.js';
 import { generateTemporaryPasswordNode, hashPasswordNode } from '../../../db/password.js';
 import type { UserAccount, UserRole } from '../../../types';
 
@@ -12,11 +12,8 @@ export function publicUserOf(account: UserAccount): PublicUser {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const auth = requireAuth(req);
+  const auth = await authorize(req, { roles: ['ADMIN'] });
   if (!auth.ok) return res.status(auth.status ?? 503).json({ error: auth.error });
-  if (auth.user?.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Acesso restrito ao Administrador Geral.' });
-  }
 
   if (req.method === 'GET') {
     try {

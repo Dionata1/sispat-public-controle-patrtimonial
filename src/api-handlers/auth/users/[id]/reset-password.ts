@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireAuth } from '../../../../db/requireAuth.js';
+import { authorize } from '../../../../db/authorize.js';
 import { generateTemporaryPasswordNode, hashPasswordNode } from '../../../../db/password.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -8,11 +8,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Método não permitido.' });
   }
 
-  const auth = requireAuth(req);
+  const auth = await authorize(req, { roles: ['ADMIN'] });
   if (!auth.ok) return res.status(auth.status ?? 503).json({ error: auth.error });
-  if (auth.user?.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Acesso restrito ao Administrador Geral.' });
-  }
 
   const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
   if (!id) return res.status(400).json({ error: 'Identificador do usuário é obrigatório.' });
