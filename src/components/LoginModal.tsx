@@ -21,7 +21,7 @@ import { storageService } from '../services/storageService';
 import { UserProfile, UserRole } from '../types';
 
 interface LoginModalProps {
-  onLoginSuccess: (user: UserProfile, forcePasswordChange?: boolean) => void;
+  onLoginSuccess: (user: UserProfile) => void;
   isOpen: boolean;
   onClose?: () => void;
 }
@@ -77,7 +77,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         setErrorMessage(result.message || 'Falha na autenticação. Verifique os dados fornecidos.');
         return;
       }
-      onLoginSuccess(result.user, result.forcePasswordChange);
+      onLoginSuccess(result.user);
     } catch (error: any) {
       setErrorMessage(error?.message || 'Falha ao validar a credencial neste navegador.');
     } finally {
@@ -233,7 +233,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
           {/* Security guidance */}
           <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
-            <strong className="text-slate-200">Segurança:</strong> as senhas não são exibidas nem armazenadas em texto puro. Contas iniciais exigem troca de senha no primeiro acesso e novas contas recebem senha temporária gerada pelo administrador.
+            <strong className="text-slate-200">Segurança:</strong> as senhas não são exibidas nem armazenadas em texto puro. Novas contas recebem senha inicial gerada pelo Administrador Geral.
+          </div>
+
+          {/* Forgot Password */}
+          <div className="bg-blue-950/30 border border-blue-500/30 p-3 rounded-2xl text-xs text-blue-200/90 flex items-start gap-2.5">
+            <Key className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+            <p className="text-[11px] leading-relaxed">
+              <strong>Esqueceu a senha?</strong> Solicite a <strong>Redefinição de Senha</strong> ao Administrador Geral (Admin → Usuários → Redefinir senha). A nova senha gerada já funciona no próximo acesso, sem troca obrigatória.
+            </p>
           </div>
 
         </div>

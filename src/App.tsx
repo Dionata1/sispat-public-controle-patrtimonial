@@ -27,7 +27,7 @@ import { UserManagementView } from './components/UserManagementView';
 import { DatabaseAdminModal } from './components/DatabaseAdminModal';
 import { ROLE_PERMISSIONS_MAP } from './components/UserManagementModal';
 import { ActiveTab } from './types';
-import { Lock, KeyRound, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 export default function App() {
   // Navigation active tab
@@ -42,12 +42,6 @@ export default function App() {
   const [inventarioSessao, setInventarioSessao] = useState<InventarioSessao>(storage.getInventarioSessao());
   const [currentUser, setCurrentUser] = useState<UserProfile>(storage.getCurrentUser());
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(!storage.isLoggedIn());
-
-  // Force Password Change state
-  const [isForcePasswordModalOpen, setIsForcePasswordModalOpen] = useState<boolean>(false);
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-  const [passwordChangeError, setPasswordChangeError] = useState('');
 
   // Modal & Drawer States
   const [selectedAssetForDetail, setSelectedAssetForDetail] = useState<Patrimonio | null>(null);
@@ -332,40 +326,11 @@ export default function App() {
     setIsLoginModalOpen(true);
   };
 
-  const handleLoginSuccess = async (user: UserProfile, forceChange?: boolean) => {
+  const handleLoginSuccess = async (user: UserProfile) => {
     setCurrentUser(user);
     setIsLoginModalOpen(false);
     loadLocalData();
     await loadCentralData();
-
-    if (forceChange || user.forcePasswordChange) {
-      setIsForcePasswordModalOpen(true);
-    }
-  };
-
-  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasswordChangeError('');
-
-    if (newPasswordInput !== confirmPasswordInput) {
-      setPasswordChangeError('As senhas informadas não coincidem.');
-      return;
-    }
-
-    if (newPasswordInput.length < 10) {
-      setPasswordChangeError('A nova senha deve possuir no mínimo 10 caracteres.');
-      return;
-    }
-
-    const res = await storage.changePassword(currentUser.id || currentUser.email, newPasswordInput);
-    if (!res.success) {
-      setPasswordChangeError(res.message || 'Erro ao alterar a senha.');
-      return;
-    }
-
-    setIsForcePasswordModalOpen(false);
-    setCurrentUser(prev => ({ ...prev, forcePasswordChange: false }));
-    alert('Senha alterada com sucesso! Você já pode utilizar o SISPAT com sua nova senha.');
   };
 
   return (
@@ -558,64 +523,6 @@ export default function App() {
 
         </main>
       </div>
-
-      {/* Force Password Change Modal */}
-      {isForcePasswordModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="p-3 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-2xl inline-flex">
-              <KeyRound className="w-6 h-6" />
-            </div>
-
-            <div>
-              <h3 className="text-lg font-bold text-white">Redefinição de Senha Obrigatória</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                Por motivos de segurança governamental, você está acessando com uma senha temporária e deve cadastrar uma nova senha pessoal forte antes de continuar.
-              </p>
-            </div>
-
-            {passwordChangeError && (
-              <div className="bg-rose-950/60 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>{passwordChangeError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleChangePasswordSubmit} className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-300">Nova Senha Pessoal *</label>
-                <input
-                  type="password"
-                  required
-                  value={newPasswordInput}
-                  onChange={(e) => setNewPasswordInput(e.target.value)}
-                  placeholder="mínimo 10 caracteres, maiúscula, número e símbolo..."
-                  className="w-full bg-slate-950 text-slate-100 text-xs rounded-xl px-3.5 py-2.5 border border-slate-800 focus:outline-none focus:border-blue-500 font-mono"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-300">Confirmar Nova Senha *</label>
-                <input
-                  type="password"
-                  required
-                  value={confirmPasswordInput}
-                  onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                  placeholder="repita a nova senha..."
-                  className="w-full bg-slate-950 text-slate-100 text-xs rounded-xl px-3.5 py-2.5 border border-slate-800 focus:outline-none focus:border-blue-500 font-mono"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg transition"
-              >
-                Salvar Nova Senha e Continuar
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* MODALS & DRAWERS */}
 

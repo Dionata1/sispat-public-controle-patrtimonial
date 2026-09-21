@@ -75,8 +75,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const check = verifyPasswordNode(password, account.passwordHash);
     if (check.needsMigration) {
+      // Re-hash automático no formato atual. O campo force_password_change não
+      // bloqueia o login normal — a senha digitada continua autenticando.
       account.passwordHash = hashPasswordNode(password);
-      account.forcePasswordChange = true;
     }
 
     if (!check.valid) {

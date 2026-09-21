@@ -1,16 +1,23 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [
+  "routes": [
     {
-      "source": "^/api/(?<slug>.*)$",
-      "destination": "/api?slug=$slug"
+      "src": "/api/(.*)",
+      "dest": "/api/index"
     },
     {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
+      "src": "/api",
+      "dest": "/api/index"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }
