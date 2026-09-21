@@ -111,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (segments.length === 0 || (segments[0] !== 'auth' && segments[0] !== 'db')) {
     const slug = (req.query as Record<string, unknown>).slug;
     if (Array.isArray(slug)) segments = slug as string[];
-    else if (typeof slug === 'string') segments = [slug];
+    else if (typeof slug === 'string') segments = slug.split('/').filter(Boolean);
   }
 
   const match = findRoute(segments);
